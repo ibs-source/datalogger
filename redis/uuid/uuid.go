@@ -10,7 +10,7 @@ import (
     "sync"
 
     "github.com/google/uuid"
-    "github.com/ibs-source/datalogger-module-opc-ua/pkg/redis"
+    "github.com/femogas/datalogger/redis"
     "github.com/sirupsen/logrus"
 )
 
