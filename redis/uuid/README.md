@@ -18,16 +18,16 @@ GetOrCreateUUID retrieves an existing UUID for the given endpoint and ID, or cre
    * `ID` — The node ID string.
  * **Returns:** The UUID string and an error if any occurred.
 
-## `func (um *UUIDMapper) SaveMappingToRedis(key, uuidStr string) error`
+## `func (um *UUIDMapper) SaveMappingToRedis(key string, entry UUIDEntry) error`
 
-SaveMappingToRedis saves a key-UUID pair to Redis.
+SaveMappingToRedis saves a key-UUIDEntry pair to Redis.
 
  * **Parameters:**
    * `key` — The key to save.
-   * `uuidStr` — The UUID associated with the key.
+   * `entry` — The structure with configuration associated with the key.
  * **Returns:** An error if the operation fails.
 
-## `func (um *UUIDMapper) LoadMappingFromRedis() error`
+## `func (um *UUIDMapper) GenerateUUIDMap() error`
 
 LoadMappingFromRedis loads the UUID mapping from Redis into memory.
 

@@ -75,8 +75,8 @@ func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.Cancel
 func loadConfig() *configuration.Redis {
 	return &configuration.Redis{
 		RedisURL:      global.GetEnv("REDIS_URL", "redis://127.0.0.1:6379"),
-		StreamName:    global.GetEnv("STREAM_NAME", "opcua_stream"),
-		ConsumerGroup: global.GetEnv("CONSUMER_GROUP", "opcua_group"),
+		StreamName:    global.GetEnv("REDIS_STREAM", "redis-stream"),
+		ConsumerGroup: global.GetEnv("REDIS_CONSUMER", "redis-group"),
 	}
 }
 

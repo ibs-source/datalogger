@@ -5,234 +5,167 @@ package uuid
 
 import (
     "context"
+    "encoding/json"
     "fmt"
     "sync"
 
     "github.com/google/uuid"
-    "github.com/femogas/datalogger/redis"
+    "github.com/ibs-source/datalogger-module-opc-ua/pkg/redis"
     "github.com/sirupsen/logrus"
 )
 
 /**
-* UUIDMapper is a thread-safe structure that maintains a mapping between keys and UUIDs.
+* UUIDEntry represents an entry in the UUID map, containing the UUID and the associated configuration object.
 */
-type UUIDMapper struct {
-    sync.RWMutex
-    Mapping map[string]string // Mapping stores the key-UUID pairs.
-    Logger  *logrus.Logger    // Logger for logging messages.
-    Redis   *redis.Client     // Redis client for persistence.
+type UUIDEntry struct {
+    UUID          string      `json:"uuid"`          // UUID associated with the key
+    Configuration interface{} `json:"configuration"` // Associated configuration object
 }
 
 /**
-* NewUUIDMapper creates a new UUIDMapper instance.
+* UUIDMapper is a thread-safe structure that maintains a map between keys and UUIDEntries.
+* It uses Redis for persistence and Logrus for logging.
+*/
+type UUIDMapper struct {
+    sync.RWMutex
+    Mapping map[string]UUIDEntry // Mapping stores key-UUIDEntry pairs
+    Logger  *logrus.Logger      // Logger for recording messages
+    Redis   *redis.Client       // Redis client for persistence
+}
+
+/**
+* NewUUIDMapper creates a new instance of UUIDMapper.
 *
 * @param client The Redis client for persistence.
-* @param logger The logger for logging messages.
+* @param logger The logger for recording messages.
 * @return A pointer to the initialized UUIDMapper.
 */
 func NewUUIDMapper(client *redis.Client, logger *logrus.Logger) *UUIDMapper {
     return &UUIDMapper{
-        Mapping: make(map[string]string),
+        Mapping: make(map[string]UUIDEntry),
         Redis:   client,
         Logger:  logger,
     }
 }
 
 /**
-* GetOrCreateUUID retrieves an existing UUID for the given endpoint and ID,
-* or creates a new one if it doesn't exist.
+* GetUUIDEntryFromMapping retrieves the UUIDEntry from the internal map for a given key.
 *
-* @param endpoint The endpoint string.
-* @param ID   The node ID string.
-* @return The UUID string and an error if any occurred.
+* @param key The key to search for.
+* @return The UUIDEntry and a boolean indicating if it exists.
 */
-func (um *UUIDMapper) GetOrCreateUUID(endpoint, ID string) (string, error) {
-    key := endpoint + ":" + ID
-    if uuidStr, exists := um.getUUIDFromMapping(key); exists {
-        return uuidStr, nil
-    }
-    return um.createUUIDForKey(key)
-}
-
-/**
-* getUUIDFromMapping retrieves the UUID from the internal mapping for a given key.
-*
-* @param key The key to look up.
-* @return The UUID string and a boolean indicating if it exists.
-*/
-func (um *UUIDMapper) getUUIDFromMapping(key string) (string, bool) {
+func (um *UUIDMapper) GetUUIDEntryFromMapping(key string) (UUIDEntry, bool) {
     um.RLock()
-    uuidStr, exists := um.Mapping[key]
+    entry, exists := um.Mapping[key]
     um.RUnlock()
-    return uuidStr, exists
+    return entry, exists
 }
 
 /**
-* createUUIDForKey generates a new UUID for a given key and saves it to the mapping and Redis.
+* SaveMappingToRedis saves a key-UUIDEntry pair to Redis as a JSON string.
 *
-* @param key The key for which to create a UUID.
-* @return The new UUID string and an error if any occurred.
+* @param key   The key to save.
+* @param entry The UUIDEntry associated with the key.
+* @return An error if the operation fails.
 */
-func (um *UUIDMapper) createUUIDForKey(key string) (string, error) {
+func (um *UUIDMapper) SaveMappingToRedis(key string, entry UUIDEntry) error {
+    data, err := json.Marshal(entry)
+    if err != nil {
+        return fmt.Errorf("error serializing UUIDEntry: %w", err)
+    }
+    return um.Redis.Client.HSet(context.Background(), "uuid-map", key, data).Err()
+}
+
+/**
+* GenerateUUIDMap verifies the current UUID mappings against the provided configurations.
+*
+* @param createValidKeysFunc A function that generates a set of valid keys as map[string]interface{}.
+* @return An error if the operation fails.
+*/
+func (um *UUIDMapper) GenerateUUIDMap(createValidKeysFunc func() map[string]interface{}) error {
+    // Create a set of valid keys using the provided function
+    validKeys := createValidKeysFunc()
+
+    // Apply the valid configurations to the mappings
+    if err := um.applyValidConfigurations(validKeys); err != nil {
+        return fmt.Errorf("error applying valid configurations: %w", err)
+    }
+
+    return nil
+}
+
+/**
+* loadCurrentMapping loads the current UUID map from Redis.
+*
+* @return The map of UUIDEntries and an error if the operation fails.
+*/
+func (um *UUIDMapper) loadCurrentMapping() (map[string]UUIDEntry, error) {
+    currentMapping, err := um.Redis.Client.HGetAll(context.Background(), "uuid-map").Result()
+    if err != nil {
+        return nil, fmt.Errorf("error loading UUID map from Redis: %w", err)
+    }
+    mapping := make(map[string]UUIDEntry)
+    for key, value := range currentMapping {
+        var entry UUIDEntry
+        if err := json.Unmarshal([]byte(value), &entry); err != nil {
+            return nil, fmt.Errorf("error deserializing key %s: %w", key, err)
+        }
+        mapping[key] = entry
+    }
+
+    return mapping, nil
+}
+
+/**
+* generateUUID generates a new UUID.
+*
+* @return A string representing the new UUID.
+*/
+func (um *UUIDMapper) generateUUID() string {
+    return uuid.New().String()
+}
+
+/**
+* applyValidConfigurations updates the configurations of existing valid keys in the map.
+*
+* @param validKeys The map of valid keys with their respective configuration objects.
+* @return An error if the operation fails.
+*/
+func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{}) error {
     um.Lock()
-    // Double-check to avoid race conditions.
-    if uuidStr, exists := um.Mapping[key]; exists {
-        um.Unlock()
-        return uuidStr, nil
-    }
-    newUUID := uuid.New().String()
-    um.Mapping[key] = newUUID
-    um.Unlock()
+    defer um.Unlock()
 
-    // Save the new mapping to Redis.
-    if err := um.SaveMappingToRedis(key, newUUID); err != nil {
-        return "", err
-    }
-    um.Logger.WithFields(logrus.Fields{
-        "key":  key,
-        "uuid": newUUID,
-    }).Info("Created new UUID mapping")
-    return newUUID, nil
-}
-
-/**
-* SaveMappingToRedis saves a key-UUID pair to Redis.
-*
-* @param key     The key to save.
-* @param uuidStr The UUID associated with the key.
-* @return An error if the operation fails.
-*/
-func (um *UUIDMapper) SaveMappingToRedis(key, uuidStr string) error {
-    return um.Redis.Client.HSet(context.Background(), "uuid_map", key, uuidStr).Err()
-}
-
-/**
-* LoadMappingFromRedis loads the UUID mapping from Redis into memory.
-*
-* @return An error if the operation fails.
-*/
-func (um *UUIDMapper) LoadMappingFromRedis() error {
-    result, err := um.Redis.Client.HGetAll(context.Background(), "uuid_map").Result()
+    currentMapping, err := um.loadCurrentMapping()
     if err != nil {
         return err
     }
-    um.Lock()
-    um.Mapping = result
-    um.Unlock()
-    return nil
-}
 
-/*
-* VerifyAndCleanUUIDMap checks the current UUID mappings against the provided configurations,
-* removes invalid entries, and resolves duplicate UUIDs.
-*
-* @param createValidKeysFunc A function that generates a set of valid keys as map[string]struct{}.
-* @return An error if the operation fails.
-*/
-func (um *UUIDMapper) VerifyAndCleanUUIDMap(createValidKeysFunc func() map[string]struct{}) error {
-    // Create a set of valid keys using the provided function.
-    validKeys := createValidKeysFunc()
-
-    // Retrieve the current mappings from Redis.
-    currentMapping, err := um.Redis.Client.HGetAll(context.Background(), "uuid_map").Result()
-    if err != nil {
-        return fmt.Errorf("error loading UUID mapping from Redis: %w", err)
-    }
-
-    // Remove any invalid entries.
-    um.removeInvalidEntries(currentMapping, validKeys)
-
-    // Get the count of UUID occurrences to detect duplicates.
-    uuidCount := um.getUUIDCount()
-
-    // Resolve any duplicate UUIDs.
-    um.resolveDuplicateUUIDs(uuidCount)
-
-    return nil
-}
-
-/**
-* removeInvalidEntries removes entries from the mapping that are not in the set of valid keys.
-*
-* @param currentMapping The current key-UUID mappings.
-* @param validKeys      The set of valid keys.
-*/
-func (um *UUIDMapper) removeInvalidEntries(currentMapping map[string]string, validKeys map[string]struct{}) {
-    for key, uuidStr := range currentMapping {
-        if _, exists := validKeys[key]; exists {
+    for key, configuration := range validKeys {
+        if value, exists := currentMapping[key]; exists {
+            um.Mapping[key] = value
             continue
         }
-        // Remove the invalid key from Redis.
-        if err := um.Redis.Client.HDel(context.Background(), "uuid_map", key).Err(); err != nil {
+        uuid := um.generateUUID()
+        updatedEntry := UUIDEntry{
+            UUID:          uuid,
+            Configuration: configuration,
+        }
+        um.Mapping[key] = updatedEntry
+
+        // Save the updated UUIDEntry to Redis
+        if err := um.SaveMappingToRedis(key, updatedEntry); err != nil {
             um.Logger.WithFields(logrus.Fields{
                 "key":   key,
-                "uuid":  uuidStr,
                 "error": err,
-            }).Error("Error removing entry from UUID mapping")
-            continue
+            }).Error("Error updating UUIDEntry configuration in Redis")
+            return err
         }
+
         um.Logger.WithFields(logrus.Fields{
             "key":  key,
-            "uuid": uuidStr,
-        }).Info("Removed invalid UUID mapping")
-
-        // Remove the invalid key from the in-memory mapping.
-        um.Lock()
-        delete(um.Mapping, key)
-        um.Unlock()
+            "uuid": uuid,
+        }).Info("Generated configuration for UUID")
     }
-}
 
-/**
-* getUUIDCount counts the occurrences of each UUID to detect duplicates.
-*
-* @return A map where keys are UUIDs and values are their counts.
-*/
-func (um *UUIDMapper) getUUIDCount() map[string]int {
-    uuidCount := make(map[string]int)
-    um.RLock()
-    for _, uuidStr := range um.Mapping {
-        uuidCount[uuidStr]++
-    }
-    um.RUnlock()
-    return uuidCount
-}
-
-/**
-* resolveDuplicateUUIDs resolves duplicate UUIDs by generating new UUIDs for keys with duplicates.
-*
-* @param uuidCount A map of UUID counts to identify duplicates.
-*/
-func (um *UUIDMapper) resolveDuplicateUUIDs(uuidCount map[string]int) {
-    for key, uuidStr := range um.Mapping {
-        if uuidCount[uuidStr] <= 1 {
-            continue
-        }
-        // Generate a new UUID to replace the duplicate.
-        newUUID := uuid.New().String()
-        if err := um.SaveMappingToRedis(key, newUUID); err != nil {
-            um.Logger.WithFields(logrus.Fields{
-                "key":     key,
-                "oldUUID": uuidStr,
-                "newUUID": newUUID,
-                "error":   err,
-            }).Error("Error updating UUID mapping to avoid duplicates")
-            continue
-        }
-
-        // Update the in-memory mapping with the new UUID.
-        um.Lock()
-        um.Mapping[key] = newUUID
-        um.Unlock()
-
-        um.Logger.WithFields(logrus.Fields{
-            "key":     key,
-            "oldUUID": uuidStr,
-            "newUUID": newUUID,
-        }).Info("Updated UUID mapping to avoid duplicate")
-
-        // Update the UUID counts.
-        uuidCount[uuidStr]--
-        uuidCount[newUUID]++
-    }
+    return nil
 }

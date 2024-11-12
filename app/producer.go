@@ -54,9 +54,9 @@ type Connector interface {
     * Creates a map of valid keys from the given configurations.
     *
     * @param configurations A slice of configurations.
-    * @return A map where each key is a string, and the value is an empty struct.
+    * @return A map where each key is a string, and the value is an interface.
     */
-    CreateValidKeys() map[string]struct{}
+    CreateValidKeys() map[string]interface{}
 }
 
 /**
