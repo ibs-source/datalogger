@@ -1,34 +1,37 @@
 # UUID
 
-## `func NewUUIDMapper(client *redis.Client, logger *logrus.Logger) *UUIDMapper`
+### `func NewUUIDMapper(client *redis.Client, logger *logrus.Logger) *UUIDMapper`
 
-NewUUIDMapper creates a new UUIDMapper instance.
+**NewUUIDMapper** creates a new instance of `UUIDMapper`.
 
- * **Parameters:**
-   * `client` — The Redis client for persistence.
-   * `logger` — The logger for logging messages.
- * **Returns:** A pointer to the initialized UUIDMapper.
+- **Parameters:**
+  - `client` — The Redis client for persistence.
+  - `logger` — The logger for logging messages.
+- **Returns:** A pointer to the initialized `UUIDMapper`.
 
-## `func (um *UUIDMapper) GetOrCreateUUID(endpoint, ID string) (string, error)`
+### `func (um *UUIDMapper) GetUUIDEntryFromMapping(key string) (UUIDEntry, bool)`
 
-GetOrCreateUUID retrieves an existing UUID for the given endpoint and ID, or creates a new one if it doesn't exist.
+**GetUUIDEntryFromMapping** retrieves the `UUIDEntry` from the internal map for a given key.
 
- * **Parameters:**
-   * `endpoint` — The endpoint string.
-   * `ID` — The node ID string.
- * **Returns:** The UUID string and an error if any occurred.
+- **Parameters:**
+  - `key` — The key to search for.
+- **Returns:**
+  - `UUIDEntry` — The entry associated with the key.
+  - `bool` — Indicates whether the entry exists.
 
-## `func (um *UUIDMapper) SaveMappingToRedis(key string, entry UUIDEntry) error`
+### `func (um *UUIDMapper) SaveMappingToRedis(key string, entry UUIDEntry) error`
 
-SaveMappingToRedis saves a key-UUIDEntry pair to Redis.
+**SaveMappingToRedis** saves a key-UUIDEntry pair to Redis as a JSON string.
 
- * **Parameters:**
-   * `key` — The key to save.
-   * `entry` — The structure with configuration associated with the key.
- * **Returns:** An error if the operation fails.
+- **Parameters:**
+  - `key` — The key to save.
+  - `entry` — The `UUIDEntry` associated with the key.
+- **Returns:** An error if the operation fails.
 
-## `func (um *UUIDMapper) GenerateUUIDMap() error`
+### `func (um *UUIDMapper) GenerateUUIDMap(createValidKeysFunc func() map[string]interface{}) error`
 
-LoadMappingFromRedis loads the UUID mapping from Redis into memory.
+**GenerateUUIDMap** verifies the current UUID mappings against the provided configurations and updates them accordingly.
 
- * **Returns:** An error if the operation fails.
+- **Parameters:**
+  - `createValidKeysFunc` — A function that generates a set of valid keys as `map[string]interface{}`.
+- **Returns:** An error if the operation fails.
