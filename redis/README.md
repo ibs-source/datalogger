@@ -3,8 +3,8 @@
 | Parameter        | Type     | Description                                    | Default                  |
 |------------------|----------|------------------------------------------------|--------------------------|
 | `REDIS_URL`      | `string` | The URL of the Redis server.                   | `redis://127.0.0.1:6379` |
-| `STREAM_NAME`    | `string` | The name of the Redis stream to interact with. | `opcua-stream`           |
-| `CONSUMER_GROUP` | `string` | The name of the consumer group in Redis.       | `opcua-group`            |
+| `STREAM_NAME`    | `string` | The name of the Redis stream to interact with. | `redis-stream`           |
+| `CONSUMER_GROUP` | `string` | The name of the consumer group in Redis.       | `redis-group`            |
 
 
 ## `func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc) (*Client, error)`
