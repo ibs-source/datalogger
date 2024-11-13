@@ -140,9 +140,13 @@ func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{})
         return err
     }
 
+    // Keep the old keys to allow the connector to free up the remaining streams
+    for key, value := range currentMapping {
+        um.Mapping[key] = value
+    }
+
     for key, configuration := range validKeys {
-        if value, exists := currentMapping[key]; exists {
-            um.Mapping[key] = value
+        if _, exists := currentMapping[key]; exists {
             continue
         }
         uuid := um.generateUUID()
