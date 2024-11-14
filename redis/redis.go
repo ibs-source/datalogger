@@ -160,7 +160,7 @@ func (rc *Client) createConsumerGroupIfNotExists() error {
 * @return An error if the ping fails.
 */
 func (rc *Client) Ping() error {
-	return rc.retryPing(24, 2*time.Second)
+	return rc.retryPing(24, 2 * time.Second)
 }
 
 /**

@@ -1,11 +1,11 @@
 # Global
 
-| Parameter           | Type     | Description                                                            | Default       |
-|---------------------|----------|------------------------------------------------------------------------|---------------|
-| `DEBUG`             | `int`    | Enables or disables debug mode (1 to enable, 0 to disable).           | `1`           |
-| `CONFIG_FILE`       | `string` | Specifies the path to the configuration file.                         | `config.json` |
-| `MAX_STORAGE_LOG`   | `int`    | Defines the maximum number of logs that can be stored.                | `15000`       |
-| `MAX_STORAGE_TTL`   | `int`    | Sets the time-to-live for stored logs, in seconds.                    | `3600`        |
+| Parameter         | Type     | Description                                                                                     | Default       |
+|-------------------|----------|-------------------------------------------------------------------------------------------------|---------------|
+| `DEBUG`           | `int`    | Imposta il livello di log:<br> - `0`: DebugLevel (tutti i log)<br> - `1`: InfoLevel (info e superiori)<br> - `2`: ErrorLevel (solo errori) | `1`           |
+| `CONFIG_FILE`     | `string` | Specifica il percorso del file di configurazione.                                               | `config.json` |
+| `MAX_STORAGE_LOG` | `int`    | Definisce il numero massimo di log che possono essere memorizzati.                             | `15000`       |
+| `MAX_STORAGE_TTL` | `int`    | Imposta il time-to-live per i log memorizzati, in secondi.                                      | `3600`        |
 
 ## `func InitializeGlobalConfiguration() *GlobalConfiguration`
 
