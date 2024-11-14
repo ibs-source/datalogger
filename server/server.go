@@ -80,8 +80,8 @@
   */
  func (srv *Server) registerHandlers(mux *http.ServeMux) {
 	 mux.HandleFunc("/uuid-mapping", srv.handleUUIDMapping)
-	 mux.HandleFunc("/status", srv.handleStatus)
 	 mux.HandleFunc("/healthz", srv.handleHealthz)
+	 mux.HandleFunc("/status", srv.handleStatus)
  }
  
  /**
