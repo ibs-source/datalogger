@@ -12,12 +12,4 @@ type Redis struct {
 	* RedisURL is the URL of the Redis server.
 	*/
 	RedisURL string
-	/**
-	* StreamName is the name of the Redis stream to interact with.
-	*/
-	StreamName string
-	/**
-	* ConsumerGroup is the name of the consumer group for stream processing.
-	*/
-	ConsumerGroup string
 }

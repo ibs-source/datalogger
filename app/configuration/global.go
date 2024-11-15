@@ -1,10 +1,13 @@
-// Package global provides functions and types for initializing and managing global configurations.
+/**
+* Package global provides functions and types for initializing and managing global configurations.
+*/
 package global
 
 import (
     "os"
     "fmt"
     "flag"
+    "math"
     "strconv"
 
     "github.com/sirupsen/logrus"
@@ -13,12 +16,13 @@ import (
 // EmptyString is a constant for an empty string.
 const EmptyString = ""
 
-// GlobalConfiguration holds the global settings for the application.
+/**
+* GlobalConfiguration holds the global settings for the application.
+*/
 type GlobalConfiguration struct {
-    DebugMode      int    // DebugMode controls the logging level.
-    ConfigFilePath string // ConfigFilePath is the path to the configuration file.
-    DefaultMaxLogs int    // DefaultMaxLogs is the default maximum number of storage logs per variable.
-    DefaultTTL     int    // DefaultTTL is the default time-to-live in seconds for Redis keys.
+    DebugMode           int    // DebugMode controls the logging level.
+    ConfigFilePath      string // ConfigFilePath is the path to the configuration file.
+    DefaultMaxStorageLogs int64 // DefaultMaxStorageLogs is the default maximum number of storage logs per variable.
 }
 
 /**
@@ -29,10 +33,9 @@ type GlobalConfiguration struct {
 */
 func InitializeGlobalConfiguration() *GlobalConfiguration {
     global := &GlobalConfiguration{
-        DebugMode:      GetEnvAsInt("DEBUG", 1),
-        ConfigFilePath: GetEnv("CONFIG_FILE", "config.json"),
-        DefaultMaxLogs: GetEnvAsInt("MAX_STORAGE_LOG", 15000),
-        DefaultTTL:     GetEnvAsInt("MAX_STORAGE_TTL", 3600),
+        DebugMode:           GetEnvAsInt("DEBUG", 1),
+        ConfigFilePath:      GetEnv("CONFIG_FILE", "config.json"),
+        DefaultMaxStorageLogs: GetEnvAsInt64("MAX_LOG_STORAGE", 1000),
     }
     overrideGlobalConfigWithFlags(global)
     return global
@@ -46,8 +49,7 @@ func InitializeGlobalConfiguration() *GlobalConfiguration {
 func overrideGlobalConfigWithFlags(global *GlobalConfiguration) {
     flag.IntVar(&global.DebugMode, "debug", global.DebugMode, "Debug mode (0=all logs, 1=info only, 2=errors only)")
     flag.StringVar(&global.ConfigFilePath, "config-file", global.ConfigFilePath, "Path to the configuration file")
-    flag.IntVar(&global.DefaultMaxLogs, "max-storage-logs", global.DefaultMaxLogs, "Maximum number of storage logs per variable")
-    flag.IntVar(&global.DefaultTTL, "max-storage-ttl", global.DefaultTTL, "Default TTL (time to live) in seconds for Redis keys")
+    flag.Int64Var(&global.DefaultMaxStorageLogs, "max-log-storage", global.DefaultMaxStorageLogs, "Maximum number of storage logs per variable")
     flag.Parse()
 }
 
@@ -108,6 +110,50 @@ func DefaultValueInt(value interface{}, defaultValue int) int {
 }
 
 /**
+* Returns the 64-bit integer representation of value if possible; otherwise, it returns defaultValue.
+* It supports various integer types and strings.
+*
+* @param value        The value to be converted to int64.
+* @param defaultValue The default integer value to return if the conversion fails.
+* @return The 64-bit integer representation of value or defaultValue.
+*/
+func DefaultValueInt64(value interface{}, defaultValue int64) int64 {
+    switch option := value.(type) {
+    case int:
+        return int64(option)
+    case int8:
+        return int64(option)
+    case int16:
+        return int64(option)
+    case int32:
+        return int64(option)
+    case int64:
+        return option
+    case uint:
+        if option > math.MaxInt64 {
+            return defaultValue
+        }
+        return int64(option)
+    case uint8:
+        return int64(option)
+    case uint16:
+        return int64(option)
+    case uint32:
+        return int64(option)
+    case uint64:
+        if option > math.MaxInt64 {
+            return defaultValue
+        }
+        return int64(option)
+    case string:
+        if parsed, err := strconv.ParseInt(option, 10, 64); err == nil {
+            return parsed
+        }
+    }
+    return defaultValue
+}
+
+/**
 * Retrieves the environment variable named by the key.
 * Returns the value or defaultValue if the variable does not exist or is empty.
 *
@@ -134,6 +180,19 @@ func GetEnv(key, defaultValue string) string {
 func GetEnvAsInt(name string, defaultValue int) int {
     environment := GetEnv(name, EmptyString)
     return DefaultValueInt(environment, defaultValue)
+}
+
+/**
+* Retrieves the environment variable named by name and converts it to a 64-bit integer.
+* Returns the integer value or defaultValue if the variable does not exist or conversion fails.
+*
+* @param name         The name of the environment variable.
+* @param defaultValue The default 64-bit integer value to return if conversion fails.
+* @return The 64-bit integer value of the environment variable or defaultValue.
+*/
+func GetEnvAsInt64(name string, defaultValue int64) int64 {
+    environment := GetEnv(name, EmptyString)
+    return DefaultValueInt64(environment, defaultValue)
 }
 
 /**

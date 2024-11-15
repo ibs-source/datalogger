@@ -29,8 +29,8 @@ type UUIDEntry struct {
 type UUIDMapper struct {
     sync.RWMutex
     Mapping map[string]UUIDEntry // Mapping stores key-UUIDEntry pairs
-    Logger  *logrus.Logger      // Logger for recording messages
-    Redis   *redis.Client       // Redis client for persistence
+    Logger  *logrus.Logger       // Logger for recording messages
+    Redis   *redis.Client        // Redis client for persistence
 }
 
 /**
@@ -62,13 +62,13 @@ func (um *UUIDMapper) GetUUIDEntryFromMapping(key string) (UUIDEntry, bool) {
 }
 
 /**
-* SaveMappingToRedis saves a key-UUIDEntry pair to Redis as a JSON string.
+* saveMappingToRedis saves a key-UUIDEntry pair to Redis as a JSON string.
 *
 * @param key   The key to save.
 * @param entry The UUIDEntry associated with the key.
 * @return An error if the operation fails.
 */
-func (um *UUIDMapper) SaveMappingToRedis(key string, entry UUIDEntry) error {
+func (um *UUIDMapper) saveMappingToRedis(key string, entry UUIDEntry) error {
     data, err := json.Marshal(entry)
     if err != nil {
         return fmt.Errorf("error serializing UUIDEntry: %w", err)
@@ -154,10 +154,21 @@ func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{})
             UUID:          uuid,
             Configuration: configuration,
         }
+
+        // Initialize the Redis stream and consumer group
+        if err := um.Redis.CreateStreamAndConsumerGroup(uuid); err != nil {
+            um.Logger.WithFields(logrus.Fields{
+                "key":   key,
+                "uuid":  uuid,
+                "error": err,
+            }).Error("Error initializing Redis stream and consumer group")
+            return err
+        }
+
         um.Mapping[key] = updatedEntry
 
         // Save the updated UUIDEntry to Redis
-        if err := um.SaveMappingToRedis(key, updatedEntry); err != nil {
+        if err := um.saveMappingToRedis(key, updatedEntry); err != nil {
             um.Logger.WithFields(logrus.Fields{
                 "key":   key,
                 "error": err,

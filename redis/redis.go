@@ -59,11 +59,6 @@ func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.Cancel
 		return nil, err
 	}
 
-	// Initialize the Redis stream and consumer group.
-	if err := rc.InitializeStream(); err != nil {
-		return nil, err
-	}
-
 	return rc, nil
 }
 
@@ -74,9 +69,7 @@ func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.Cancel
 */
 func loadConfig() *configuration.Redis {
 	return &configuration.Redis{
-		RedisURL:      global.GetEnv("REDIS_URL", "redis://127.0.0.1:6379"),
-		StreamName:    global.GetEnv("REDIS_STREAM", "redis-stream"),
-		ConsumerGroup: global.GetEnv("REDIS_CONSUMER", "redis-group"),
+		RedisURL: global.GetEnv("REDIS_URL", "redis://127.0.0.1:6379"),
 	}
 }
 
@@ -118,39 +111,26 @@ func (rc *Client) Close() error {
 }
 
 /**
-* InitializeStream initializes the Redis stream and consumer group.
+* CreateStreamAndConsumerGroup creates a consumer group for the specified stream if it doesn't already exist.
 *
-* @return An error if initialization fails.
-*/
-func (rc *Client) InitializeStream() error {
-	err := rc.createConsumerGroupIfNotExists()
-	if err != nil {
-		return err
-	}
-	rc.Logger.WithFields(logrus.Fields{
-		"stream":        rc.Configuration.StreamName,
-		"consumerGroup": rc.Configuration.ConsumerGroup,
-	}).Info("Consumer Group created or already exists")
-	return nil
-}
-
-/**
-* createConsumerGroupIfNotExists creates a consumer group for the stream if it doesn't already exist.
-*
+* @param uuid The name of the Redis stream.
 * @return An error if the operation fails.
 */
-func (rc *Client) createConsumerGroupIfNotExists() error {
+func (rc *Client) CreateStreamAndConsumerGroup(uuid string) error {
 	_, err := rc.Instance().XGroupCreateMkStream(
 		context.Background(),
-		rc.Configuration.StreamName,
-		rc.Configuration.ConsumerGroup,
+		uuid,
+		uuid,
 		"$",
 	).Result()
 	if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
 		// BUSYGROUP error indicates the group already exists.
 		return nil
 	}
-	rc.Logger.WithError(err).Error("Error creating Consumer Group")
+	rc.Logger.WithFields(logrus.Fields{
+		"stream":        uuid,
+		"consumerGroup": uuid,
+	}).WithError(err).Error("Error creating Consumer Group")
 	return err
 }
 
@@ -160,7 +140,7 @@ func (rc *Client) createConsumerGroupIfNotExists() error {
 * @return An error if the ping fails.
 */
 func (rc *Client) Ping() error {
-	return rc.retryPing(24, 2 * time.Second)
+	return rc.retryPing(24, 2*time.Second)
 }
 
 /**
@@ -187,14 +167,16 @@ func (rc *Client) retryPing(maxRetries int, retryDelay time.Duration) error {
 }
 
 /**
-* PushToRedis adds data to the Redis stream.
+* PushToRedis adds data to a specified Redis stream with approximate pruning.
 *
+* @param uuid The name of the Redis stream.
+* @param max  The maximum number of records to retain in the stream.
 * @param data The data to be added to the stream.
 * @return An error if the operation fails.
 */
-func (rc *Client) PushToRedis(data map[string]interface{}) error {
+func (rc *Client) PushToRedis(uuid string, max int64, data map[string]interface{}) error {
 	data = rc.addTimestamp(data)
-	err := rc.addToStream(data)
+	err := rc.addToStream(uuid, max, data)
 	if err != nil {
 		rc.Logger.WithError(err).Error("Error adding message to Stream")
 		return err
@@ -214,16 +196,19 @@ func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface
 }
 
 /**
-* addToStream adds the data to the Redis stream.
+* addToStream adds the data to the specified Redis stream with approximate pruning.
 *
+* @param uuid The name of the Redis stream.
+* @param max  The maximum number of records to retain in the stream.
 * @param data The data to be added to the stream.
 * @return An error if the operation fails.
 */
-func (rc *Client) addToStream(data map[string]interface{}) error {
+func (rc *Client) addToStream(uuid string, max int64, data map[string]interface{}) error {
 	_, err := rc.Instance().XAdd(rc.Context, &redis.XAddArgs{
-		Stream: rc.Configuration.StreamName,
+		Stream: uuid,
 		ID:     "*",
 		Values: data,
+		MaxLen: max,
 	}).Result()
 	return err
 }
