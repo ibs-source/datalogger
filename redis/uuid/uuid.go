@@ -19,6 +19,7 @@ import (
 */
 type UUIDEntry struct {
     UUID          string      `json:"uuid"`          // UUID associated with the key
+    Consumer      string      `json:"consumer"`      // Consumer group associated to the strem
     Configuration interface{} `json:"configuration"` // Associated configuration object
 }
 
@@ -150,13 +151,15 @@ func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{})
             continue
         }
         uuid := um.generateUUID()
+        consumer := um.generateUUID()
         updatedEntry := UUIDEntry{
             UUID:          uuid,
+            Consumer:      consumer,
             Configuration: configuration,
         }
 
         // Initialize the Redis stream and consumer group
-        if err := um.Redis.CreateStreamAndConsumerGroup(uuid); err != nil {
+        if err := um.Redis.CreateStreamAndConsumerGroup(uuid, consumer); err != nil {
             um.Logger.WithFields(logrus.Fields{
                 "key":   key,
                 "uuid":  uuid,

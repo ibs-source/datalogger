@@ -111,16 +111,17 @@ func (rc *Client) Close() error {
 }
 
 /**
-* CreateStreamAndConsumerGroup creates a consumer group for the specified stream if it doesn't already exist.
+* CreateStreamAndConsumerGroup creates a consumer group with the specified name for the given Redis stream if it doesn't already exist.
 *
-* @param uuid The name of the Redis stream.
+* @param uuid     The name of the Redis stream.
+* @param consumer The name of the consumer group.
 * @return An error if the operation fails.
 */
-func (rc *Client) CreateStreamAndConsumerGroup(uuid string) error {
+func (rc *Client) CreateStreamAndConsumerGroup(uuid string, consumer string) error {
 	_, err := rc.Instance().XGroupCreateMkStream(
 		context.Background(),
 		uuid,
-		uuid,
+		consumer,
 		"$",
 	).Result()
 	if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
@@ -129,7 +130,7 @@ func (rc *Client) CreateStreamAndConsumerGroup(uuid string) error {
 	}
 	rc.Logger.WithFields(logrus.Fields{
 		"stream":        uuid,
-		"consumerGroup": uuid,
+		"consumerGroup": consumer,
 	}).WithError(err).Error("Error creating Consumer Group")
 	return err
 }
