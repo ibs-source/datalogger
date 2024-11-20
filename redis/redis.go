@@ -111,31 +111,6 @@ func (rc *Client) Close() error {
 }
 
 /**
-* CreateStreamAndConsumerGroup creates a consumer group with the specified name for the given Redis stream if it doesn't already exist.
-*
-* @param uuid     The name of the Redis stream.
-* @param consumer The name of the consumer group.
-* @return An error if the operation fails.
-*/
-func (rc *Client) CreateStreamAndConsumerGroup(uuid string, consumer string) error {
-	_, err := rc.Instance().XGroupCreateMkStream(
-		context.Background(),
-		uuid,
-		consumer,
-		"$",
-	).Result()
-	if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
-		// BUSYGROUP error indicates the group already exists.
-		return nil
-	}
-	rc.Logger.WithFields(logrus.Fields{
-		"stream":        uuid,
-		"consumerGroup": consumer,
-	}).WithError(err).Error("Error creating Consumer Group")
-	return err
-}
-
-/**
 * Ping checks the connection to Redis by sending a PING command.
 *
 * @return An error if the ping fails.

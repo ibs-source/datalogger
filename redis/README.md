@@ -26,15 +26,6 @@ Close closes the Redis client connection.
 
 - **Returns:** An error if closing fails.
 
-## `func (rc *Client) CreateStreamAndConsumerGroup(uuid string, consumer string) error`
-
-CreateStreamAndConsumerGroup initializes the Redis stream and creates a consumer group with the specified name if they do not already exist.
-
-- **Parameters:**
-  - `uuid` — The name of the Redis stream.
-  - `consumer` — The name of the consumer group.
-- **Returns:** An error if initialization fails.
-
 ## `func (rc *Client) Ping() error`
 
 Ping checks the connection to Redis by sending a PING command.

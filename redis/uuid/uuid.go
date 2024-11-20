@@ -158,16 +158,6 @@ func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{})
             Configuration: configuration,
         }
 
-        // Initialize the Redis stream and consumer group
-        if err := um.Redis.CreateStreamAndConsumerGroup(uuid, consumer); err != nil {
-            um.Logger.WithFields(logrus.Fields{
-                "key":   key,
-                "uuid":  uuid,
-                "error": err,
-            }).Error("Error initializing Redis stream and consumer group")
-            return err
-        }
-
         um.Mapping[key] = updatedEntry
 
         // Save the updated UUIDEntry to Redis
