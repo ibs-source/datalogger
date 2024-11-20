@@ -7,7 +7,6 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/femogas/datalogger/app/configuration"
