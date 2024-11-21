@@ -11,7 +11,6 @@ import (
     "context"
 
     "github.com/femogas/datalogger/redis"
-    "github.com/femogas/datalogger/redis/uuid"
     "github.com/femogas/datalogger/app/configuration"
     "github.com/sirupsen/logrus"
 )
@@ -80,12 +79,11 @@ type StatusEndpoint struct {
 * including context, connectors, logger, and Redis client.
 */
 type Main struct {
-    Context     context.Context
-    Cancel      context.CancelFunc
-    Connector   Connector
-    Logger      *logrus.Logger
-    RedisClient *redis.Client
-    UUIDMapper  *uuid.UUIDMapper
+    Context   context.Context
+    Cancel    context.CancelFunc
+    Connector Connector
+    Logger    *logrus.Logger
+    Redis     *redis.Client
 }
 
 /**

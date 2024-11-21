@@ -4,14 +4,12 @@
 package uuid
 
 import (
-    "context"
-    "encoding/json"
-    "fmt"
     "sync"
-
+    "crypto/sha256"
+    
     "github.com/google/uuid"
-    "github.com/femogas/datalogger/redis"
     "github.com/sirupsen/logrus"
+    "github.com/gibson042/canonicaljson-go"
 )
 
 /**
@@ -19,34 +17,85 @@ import (
 */
 type UUIDEntry struct {
     UUID          string      `json:"uuid"`          // UUID associated with the key
-    Consumer      string      `json:"consumer"`      // Consumer group associated to the strem
     Configuration interface{} `json:"configuration"` // Associated configuration object
 }
 
 /**
+* UUIDMapperInterface defines the methods that a UUID mapper should implement.
+*/
+type UUIDMapperInterface interface {
+    ApplyValidConfigurations(validKeys map[string]interface{}) error
+}
+
+/**
 * UUIDMapper is a thread-safe structure that maintains a map between keys and UUIDEntries.
-* It uses Redis for persistence and Logrus for logging.
+* It uses a Logger for logging messages.
 */
 type UUIDMapper struct {
     sync.RWMutex
     Mapping map[string]UUIDEntry // Mapping stores key-UUIDEntry pairs
     Logger  *logrus.Logger       // Logger for recording messages
-    Redis   *redis.Client        // Redis client for persistence
+}
+
+/**
+* EqualConfiguration compares the Configuration of the UUIDEntry with another configuration.
+*
+* @param other The other configuration to compare with.
+* @return True if the configurations are equal, false otherwise.
+*/
+func (entry *UUIDEntry) EqualConfiguration(other interface{}) bool {
+    entryJSON, entryErr := canonicaljson.Marshal(entry.Configuration)
+    otherJSON, otherErr := canonicaljson.Marshal(other)
+    if entryErr != nil || otherErr != nil {
+        return false
+    }
+    entryHash := sha256.Sum256(entryJSON)
+    otherHash := sha256.Sum256(otherJSON)
+    return entryHash == otherHash
+}
+
+/**
+* Equals compares the current UUIDEntry with another UUIDEntry.
+*
+* @param other The other UUIDEntry to compare with.
+* @return True if the entries are equal, false otherwise.
+*/
+func (entry *UUIDEntry) Equals(other UUIDEntry) bool {
+	if entry.UUID != other.UUID {
+		return false
+	}
+	return entry.EqualConfiguration(other.Configuration)
 }
 
 /**
 * NewUUIDMapper creates a new instance of UUIDMapper.
 *
-* @param client The Redis client for persistence.
 * @param logger The logger for recording messages.
 * @return A pointer to the initialized UUIDMapper.
 */
-func NewUUIDMapper(client *redis.Client, logger *logrus.Logger) *UUIDMapper {
+func NewUUIDMapper(logger *logrus.Logger) *UUIDMapper {
     return &UUIDMapper{
         Mapping: make(map[string]UUIDEntry),
-        Redis:   client,
         Logger:  logger,
     }
+}
+
+/**
+* Equals compares the current UUIDMapper's Mapping with another map of UUIDEntry.
+*
+* @param other The other map to compare with.
+* @return True if the mappings are equal, false otherwise.
+*/
+func (um *UUIDMapper) Equals(other map[string]UUIDEntry) bool {
+	if len(um.Mapping) != len(other) {
+		return false
+	}
+	for key, entry := range um.Mapping {
+		if otherEntry, exists := other[key]; !exists || !entry.Equals(otherEntry) {
+			return false
+		}
+	}
+	return true
 }
 
 /**
@@ -57,123 +106,52 @@ func NewUUIDMapper(client *redis.Client, logger *logrus.Logger) *UUIDMapper {
 */
 func (um *UUIDMapper) GetUUIDEntryFromMapping(key string) (UUIDEntry, bool) {
     um.RLock()
+    defer um.RUnlock()
     entry, exists := um.Mapping[key]
-    um.RUnlock()
     return entry, exists
 }
 
 /**
-* saveMappingToRedis saves a key-UUIDEntry pair to Redis as a JSON string.
-*
-* @param key   The key to save.
-* @param entry The UUIDEntry associated with the key.
-* @return An error if the operation fails.
-*/
-func (um *UUIDMapper) saveMappingToRedis(key string, entry UUIDEntry) error {
-    data, err := json.Marshal(entry)
-    if err != nil {
-        return fmt.Errorf("error serializing UUIDEntry: %w", err)
-    }
-    return um.Redis.Client.HSet(context.Background(), "uuid-map", key, data).Err()
-}
-
-/**
-* GenerateUUIDMap verifies the current UUID mappings against the provided configurations.
-*
-* @param createValidKeysFunc A function that generates a set of valid keys as map[string]interface{}.
-* @return An error if the operation fails.
-*/
-func (um *UUIDMapper) GenerateUUIDMap(createValidKeysFunc func() map[string]interface{}) error {
-    // Create a set of valid keys using the provided function
-    validKeys := createValidKeysFunc()
-
-    // Apply the valid configurations to the mappings
-    if err := um.applyValidConfigurations(validKeys); err != nil {
-        return fmt.Errorf("error applying valid configurations: %w", err)
-    }
-
-    return nil
-}
-
-/**
-* loadCurrentMapping loads the current UUID map from Redis.
-*
-* @return The map of UUIDEntries and an error if the operation fails.
-*/
-func (um *UUIDMapper) loadCurrentMapping() (map[string]UUIDEntry, error) {
-    currentMapping, err := um.Redis.Client.HGetAll(context.Background(), "uuid-map").Result()
-    if err != nil {
-        return nil, fmt.Errorf("error loading UUID map from Redis: %w", err)
-    }
-    mapping := make(map[string]UUIDEntry)
-    for key, value := range currentMapping {
-        var entry UUIDEntry
-        if err := json.Unmarshal([]byte(value), &entry); err != nil {
-            return nil, fmt.Errorf("error deserializing key %s: %w", key, err)
-        }
-        mapping[key] = entry
-    }
-
-    return mapping, nil
-}
-
-/**
-* generateUUID generates a new UUID.
+* GenerateUUID generates a new UUID.
 *
 * @return A string representing the new UUID.
 */
-func (um *UUIDMapper) generateUUID() string {
+func (um *UUIDMapper) GenerateUUID() string {
     return uuid.New().String()
 }
 
 /**
-* applyValidConfigurations updates the configurations of existing valid keys in the map.
+* UpsertUUIDEntry updates an existing UUIDEntry or creates a new one if it doesn't exist.
 *
-* @param validKeys The map of valid keys with their respective configuration objects.
-* @return An error if the operation fails.
+* @param key           The key for the UUIDEntry.
+* @param configuration The configuration object.
+* @return The updated or newly created UUIDEntry, and an error if any occurred.
 */
-func (um *UUIDMapper) applyValidConfigurations(validKeys map[string]interface{}) error {
-    um.Lock()
-    defer um.Unlock()
+func (um *UUIDMapper) UpsertUUIDEntry(key string, configuration interface{}) (UUIDEntry, error) {
+	um.Lock()
+	defer um.Unlock()
 
-    currentMapping, err := um.loadCurrentMapping()
-    if err != nil {
-        return err
-    }
+	if entry, exists := um.Mapping[key]; exists {
+		if !entry.EqualConfiguration(configuration) {
+			entry.Configuration = configuration
+			um.Mapping[key] = entry
+			um.Logger.WithField("key", key).Info("Updated configuration for existing UUIDEntry")
+		}
+		return entry, nil
+	}
 
-    // Keep the old keys to allow the connector to free up the remaining streams
-    for key, value := range currentMapping {
-        um.Mapping[key] = value
-    }
+	// Generate new UUIDs for new keys.
+	uuidStr := um.GenerateUUID()
+	newEntry := UUIDEntry{
+		UUID:          uuidStr,
+		Configuration: configuration,
+	}
 
-    for key, configuration := range validKeys {
-        if _, exists := currentMapping[key]; exists {
-            continue
-        }
-        uuid := um.generateUUID()
-        consumer := um.generateUUID()
-        updatedEntry := UUIDEntry{
-            UUID:          uuid,
-            Consumer:      consumer,
-            Configuration: configuration,
-        }
+	um.Mapping[key] = newEntry
+	um.Logger.WithFields(logrus.Fields{
+		"key":  key,
+		"uuid": uuidStr,
+	}).Info("Generated new UUIDEntry")
 
-        um.Mapping[key] = updatedEntry
-
-        // Save the updated UUIDEntry to Redis
-        if err := um.saveMappingToRedis(key, updatedEntry); err != nil {
-            um.Logger.WithFields(logrus.Fields{
-                "key":   key,
-                "error": err,
-            }).Error("Error updating UUIDEntry configuration in Redis")
-            return err
-        }
-
-        um.Logger.WithFields(logrus.Fields{
-            "key":  key,
-            "uuid": uuid,
-        }).Info("Generated configuration for UUID")
-    }
-
-    return nil
+	return newEntry, nil
 }
