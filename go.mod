@@ -2,6 +2,10 @@ module github.com/femogas/datalogger
 
 go 1.23.1
 
+retract (
+	[v0.1.4, v1.0.0] // The tags contain some bugs and have been retracted in the next version
+)
+
 require (
 	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.7.0
