@@ -218,13 +218,3 @@ func (um *UUIDMapper) UpsertUUIDEntry(key string, configuration interface{}) (UU
 
 	return newEntry, nil
 }
-
-/**
- * ApplyValidConfigurations is a placeholder satisfying the UUIDMapperInterface.
- * You can implement your own logic here to apply valid configurations as needed.
- */
-func (um *UUIDMapper) ApplyValidConfigurations(validKeys map[string]interface{}) error {
-	// Implementation depends on your specific use case.
-	// For now, we'll just return an error to indicate it's not implemented.
-	return errors.New("ApplyValidConfigurations not implemented")
-}
