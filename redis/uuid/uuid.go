@@ -3,7 +3,6 @@ package uuid
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"sort"
 	"sync"
 
