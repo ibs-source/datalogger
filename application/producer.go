@@ -11,7 +11,7 @@ import (
     "context"
 
     "github.com/femogas/datalogger/redis"
-    "github.com/femogas/datalogger/app/configuration"
+    "github.com/femogas/datalogger/application/configuration"
     "github.com/sirupsen/logrus"
 )
 
@@ -90,35 +90,35 @@ type Main struct {
 * Sets up signal handling for graceful shutdown of the application.
 * Listens for SIGINT and SIGTERM signals and initiates shutdown procedures.
 *
-* @param app       A pointer to the Main application structure.
-* @param connector The connector to be managed during shutdown.
+* @param application  A pointer to the Main application structure.
+* @param connector    The connector to be managed during shutdown.
 */
-func SetupSignalHandling(app *Main, connector Connector) {
+func SetupSignalHandling(application *Main, connector Connector) {
     signals := make(chan os.Signal, 1)
     // Notify the channel on receiving SIGINT or SIGTERM signals.
     signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
     // Start a goroutine to handle signals.
-    go handleSignals(signals, app, connector)
+    go handleSignals(signals, application, connector)
 }
 
 /**
 * Handles incoming OS signals for graceful shutdown.
 * Stops the connector and cancels the application context.
 *
-* @param signals   A channel receiving OS signals.
-* @param app       A pointer to the Main application structure.
-* @param connector The connector to be stopped.
+* @param signals       A channel receiving OS signals.
+* @param application   A pointer to the Main application structure.
+* @param connector     The connector to be stopped.
 */
-func handleSignals(signals chan os.Signal, app *Main, connector Connector) {
+func handleSignals(signals chan os.Signal, application *Main, connector Connector) {
     // Wait for an OS signal.
     sig := <-signals
-    app.Logger.WithField("signal", sig).Info("Termination signal received, shutting down safely...")
+    application.Logger.WithField("signal", sig).Info("Termination signal received, shutting down safely...")
 
     // Attempt to stop the connector.
     if err := connector.Stop(); err != nil {
-        app.Logger.WithError(err).Error("Error stopping connector")
+        application.Logger.WithError(err).Error("Error stopping connector")
     }
 
     // Cancel the application context to trigger shutdown.
-    app.Cancel()
+    application.Cancel()
 }

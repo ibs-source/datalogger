@@ -2,12 +2,12 @@
 
 This document describes the main components and interfaces involved in the producer logic and how they interact with the rest of the application. It also includes documentation for the `certificate` package, which generates self-signed certificates for TLS/HTTPS usage.
 
-## `func SetupSignalHandling(app *Main, connector Connector)`
+## `func SetupSignalHandling(application *Main, connector Connector)`
 
 Sets up signal handling for graceful shutdown of the application. Listens for SIGINT and SIGTERM signals and initiates shutdown procedures.
 
 - **Parameters:**
-  - `app` — A pointer to the Main application structure.
+  - `application` — A pointer to the Main application structure.
   - `connector` — The connector to be managed during shutdown.
 
 ## `type Connector interface`

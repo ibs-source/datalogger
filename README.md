@@ -39,7 +39,7 @@ The project is divided into several key packages:
 To initialize global configuration, use the `InitializeGlobalConfiguration()` function from the `global` package. This function reads environment variables and command-line flags to set configuration values.
 
 ```go
-import "github.com/femogas/datalogger/app/configuration"
+import "github.com/femogas/datalogger/application/configuration"
 
 config := configuration.InitializeGlobalConfiguration()
 ```
@@ -55,9 +55,9 @@ The logger is essential for monitoring the operation of your connector. Initiali
 - `2`: ErrorLevel (errors only)
 
 ```go
-import "github.com/femogas/datalogger/app"
+import "github.com/femogas/datalogger/application"
 
-logger := app.InitializeLogger(config.DebugMode)
+logger := application.InitializeLogger(config.DebugMode)
 ```
 
 The logger will help you track the connector's activities and debug issues effectively.
@@ -124,8 +124,8 @@ To use the connector, you need to create an instance of your connector struct an
 import (
     "context"
     "sync"
-    "github.com/femogas/datalogger/app"
-    "github.com/femogas/datalogger/app/configuration"
+    "github.com/femogas/datalogger/application"
+    "github.com/femogas/datalogger/application/configuration"
     "github.com/femogas/datalogger/redis"
     "github.com/femogas/datalogger/server"
     "github.com/sirupsen/logrus"
@@ -161,7 +161,7 @@ type YourNewConnector struct {
 */
 func main() {
     globalConfig := configuration.InitializeGlobalConfiguration()
-    logger := app.InitializeLogger(globalConfig.DebugMode)
+    logger := application.InitializeLogger(globalConfig.DebugMode)
 
     // Load configurations and handle potential errors.
     configurations, err := configuration.LoadConfigurations(globalConfig.ConfigFilePath)
@@ -243,7 +243,7 @@ This example demonstrates how to integrate the connector lifecycle with Redis an
 To ensure a clean application shutdown, use `SetupSignalHandling` from the `producer` package. This will listen for system signals like `SIGINT` and `SIGTERM` and call appropriate methods to stop the connector.
 
 ```go
-import "github.com/femogas/datalogger/app"
+import "github.com/femogas/datalogger/application"
 
 producer.SetupSignalHandling(appInstance, connector)
 ```
