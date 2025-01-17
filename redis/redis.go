@@ -1,7 +1,7 @@
 /**
-* Package redis provides functionalities for connecting and interacting with Redis,
-* including client initialization, stream management, and message pushing.
-*/
+ * Package redis provides functionalities for connecting and interacting with Redis,
+ * including client initialization, stream management, and message pushing.
+ */
 package redis
 
 import (
@@ -19,8 +19,8 @@ import (
 )
 
 /**
-* Client encapsulates the Redis client and related configurations.
-*/
+ * Client encapsulates the Redis client and related configurations.
+ */
 type Client struct {
 	Client        *redis.Client        // Underlying Redis client.
 	Logger        *logrus.Logger       // Logger for logging messages.
@@ -30,13 +30,13 @@ type Client struct {
 }
 
 /**
-* NewClient initializes and returns a new Redis client.
-*
-* @param logger A logger instance for logging.
-* @param ctx    The context for client operations.
-* @param cancel A cancel function to stop the context.
-* @return A pointer to the initialized Client and an error if any occurred.
-*/
+ * NewClient initializes and returns a new Redis client.
+ *
+ * @param logger A logger instance for logging.
+ * @param ctx    The context for client operations.
+ * @param cancel A cancel function to stop the context.
+ * @return A pointer to the initialized Client and an error if any occurred.
+ */
 func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc) (*Client, error) {
 	config := loadConfig()
 	client, err := createRedisClient(config.RedisURL)
@@ -61,10 +61,10 @@ func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.Cancel
 }
 
 /**
-* loadConfig loads the Redis configuration from environment variables.
-*
-* @return A pointer to the Redis configuration.
-*/
+ * loadConfig loads the Redis configuration from environment variables.
+ *
+ * @return A pointer to the Redis configuration.
+ */
 func loadConfig() *configuration.Redis {
 	return &configuration.Redis{
 		RedisURL: global.GetEnv("REDIS_URL", "redis://127.0.0.1:6379"),
@@ -72,11 +72,11 @@ func loadConfig() *configuration.Redis {
 }
 
 /**
-* createRedisClient creates a new Redis client with the given URL.
-*
-* @param redisURL The Redis server URL.
-* @return A pointer to the Redis client and an error if any occurred.
-*/
+ * createRedisClient creates a new Redis client with the given URL.
+ *
+ * @param redisURL The Redis server URL.
+ * @return A pointer to the Redis client and an error if any occurred.
+ */
 func createRedisClient(redisURL string) (*redis.Client, error) {
 	options, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -86,10 +86,10 @@ func createRedisClient(redisURL string) (*redis.Client, error) {
 }
 
 /**
-* Close closes the Redis client connection after synchronizing the UUID map.
-*
-* @return An error if closing fails.
-*/
+ * Close closes the Redis client connection after synchronizing the UUID map.
+ *
+ * @return An error if closing fails.
+ */
 func (rc *Client) Close() error {
 	// Synchronize the UUID map before closing.
 	if err := rc.syncUUIDMapToRedis(); err != nil {
@@ -104,8 +104,8 @@ func (rc *Client) Close() error {
 }
 
 /**
-* redisConnectionMonitor monitors the Redis connection and handles reconnection.
-*/
+ * redisConnectionMonitor monitors the Redis connection and handles reconnection.
+ */
 func (rc *Client) redisConnectionMonitor() {
 	for {
 		select {
@@ -145,17 +145,17 @@ func (rc *Client) redisConnectionMonitor() {
 }
 
 /**
-* checkRedisConnection checks the Redis connection by sending a PING command.
-*
-* @return An error if the connection is lost.
-*/
+ * checkRedisConnection checks the Redis connection by sending a PING command.
+ *
+ * @return An error if the connection is lost.
+ */
 func (rc *Client) checkRedisConnection() error {
 	return rc.Client.Ping(rc.Context).Err()
 }
 
 /**
-* uuidMapSyncTicker performs periodic synchronization of the UUID map.
-*/
+ * uuidMapSyncTicker performs periodic synchronization of the UUID map.
+ */
 func (rc *Client) uuidMapSyncTicker() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -172,12 +172,12 @@ func (rc *Client) uuidMapSyncTicker() {
 }
 
 /**
-* retryPing attempts to ping Redis multiple times with a delay between attempts.
-*
-* @param maxRetries The maximum number of retries.
-* @param retryDelay The delay between retries.
-* @return An error if unable to connect after max retries.
-*/
+ * retryPing attempts to ping Redis multiple times with a delay between attempts.
+ *
+ * @param maxRetries The maximum number of retries.
+ * @param retryDelay The delay between retries.
+ * @return An error if unable to connect after max retries.
+ */
 func (rc *Client) retryPing(maxRetries int, retryDelay time.Duration) error {
 	var err error
 	for i := 0; i < maxRetries; i++ {
@@ -194,10 +194,10 @@ func (rc *Client) retryPing(maxRetries int, retryDelay time.Duration) error {
 }
 
 /**
-* checkAndSyncUUIDMap checks the uuid-map in Redis, verifies its integrity, and synchronizes it with the in-memory UUIDMapper if necessary.
-*
-* @return An error if the operation fails.
-*/
+ * checkAndSyncUUIDMap checks the uuid-map in Redis, verifies its integrity, and synchronizes it with the in-memory UUIDMapper if necessary.
+ *
+ * @return An error if the operation fails.
+ */
 func (rc *Client) checkAndSyncUUIDMap() error {
 	exists, err := rc.uuidMapExistsInRedis()
 	if err != nil {
@@ -225,10 +225,10 @@ func (rc *Client) checkAndSyncUUIDMap() error {
 }
 
 /**
-* uuidMapExistsInRedis checks if the uuid-map exists in Redis.
-*
-* @return A boolean indicating existence and an error if any occurred.
-*/
+ * uuidMapExistsInRedis checks if the uuid-map exists in Redis.
+ *
+ * @return A boolean indicating existence and an error if any occurred.
+ */
 func (rc *Client) uuidMapExistsInRedis() (bool, error) {
 	exists, err := rc.Client.Exists(rc.Context, "uuid-map").Result()
 	if err != nil {
@@ -238,10 +238,10 @@ func (rc *Client) uuidMapExistsInRedis() (bool, error) {
 }
 
 /**
-* loadUUIDMapFromRedis loads the uuid-map from Redis.
-*
-* @return A map of the UUID mappings and an error if the operation fails.
-*/
+ * loadUUIDMapFromRedis loads the uuid-map from Redis.
+ *
+ * @return A map of the UUID mappings and an error if the operation fails.
+ */
 func (rc *Client) loadUUIDMapFromRedis() (map[string]uuid.UUIDEntry, error) {
 	result, err := rc.Client.HGetAll(rc.Context, "uuid-map").Result()
 	if err != nil {
@@ -261,11 +261,11 @@ func (rc *Client) loadUUIDMapFromRedis() (map[string]uuid.UUIDEntry, error) {
 }
 
 /**
-* verifyAndProcessUUIDMapDifferences compares the in-memory UUIDMapper with the Redis uuid-map, and processes differences if found.
-*
-* @param redisUUIDMap The uuid-map loaded from Redis.
-* @return An error if the operation fails.
-*/
+ * verifyAndProcessUUIDMapDifferences compares the in-memory UUIDMapper with the Redis uuid-map, and processes differences if found.
+ *
+ * @param redisUUIDMap The uuid-map loaded from Redis.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) verifyAndProcessUUIDMapDifferences(redisUUIDMap map[string]uuid.UUIDEntry) error {
 	if rc.UUIDMapper.Equals(redisUUIDMap) {
 		rc.Logger.Info("uuid-map in Redis is consistent with in-memory UUIDMapper. No action required.")
@@ -282,10 +282,10 @@ func (rc *Client) verifyAndProcessUUIDMapDifferences(redisUUIDMap map[string]uui
 }
 
 /**
-* syncUUIDMapToRedis synchronizes the uuid-map from the in-memory UUIDMapper to Redis.
-*
-* @return An error if the operation fails.
-*/
+ * syncUUIDMapToRedis synchronizes the uuid-map from the in-memory UUIDMapper to Redis.
+ *
+ * @return An error if the operation fails.
+ */
 func (rc *Client) syncUUIDMapToRedis() error {
 	if len(rc.UUIDMapper.Mapping) == 0 {
 		rc.Logger.Warn("UUIDMapper is empty; nothing to synchronize to Redis.")
@@ -306,11 +306,11 @@ func (rc *Client) syncUUIDMapToRedis() error {
 }
 
 /**
-* addUUIDMapToPipeline adds the UUIDMapper's mappings to the provided pipeline.
-*
-* @param pipeline The Redis pipeline.
-* @return An error if the operation fails.
-*/
+ * addUUIDMapToPipeline adds the UUIDMapper's mappings to the provided pipeline.
+ *
+ * @param pipeline The Redis pipeline.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) addUUIDMapToPipeline(pipeline redis.Pipeliner) error {
 	for key, entry := range rc.UUIDMapper.Mapping {
 		if err := rc.addUUIDEntryToPipeline(pipeline, key, entry); err != nil {
@@ -321,13 +321,13 @@ func (rc *Client) addUUIDMapToPipeline(pipeline redis.Pipeliner) error {
 }
 
 /**
-* addUUIDEntryToPipeline adds a UUIDEntry HSet command to the provided pipeline.
-*
-* @param pipeline  The Redis pipeline.
-* @param key   The key of the entry.
-* @param entry The UUIDEntry to add.
-* @return An error if the operation fails.
-*/
+ * addUUIDEntryToPipeline adds a UUIDEntry HSet command to the provided pipeline.
+ *
+ * @param pipeline  The Redis pipeline.
+ * @param key   The key of the entry.
+ * @param entry The UUIDEntry to add.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) addUUIDEntryToPipeline(pipeline redis.Pipeliner, key string, entry uuid.UUIDEntry) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -338,37 +338,37 @@ func (rc *Client) addUUIDEntryToPipeline(pipeline redis.Pipeliner, key string, e
 }
 
 /**
-* PushToRedis adds data to a specified Redis stream with approximate pruning.
-*
-* @param uuid The name of the Redis stream.
-* @param max  The maximum number of records to retain in the stream.
-* @param data The data to be added to the stream.
-* @return An error if the operation fails.
-*/
+ * PushToRedis adds data to a specified Redis stream with approximate pruning.
+ *
+ * @param uuid The name of the Redis stream.
+ * @param max  The maximum number of records to retain in the stream.
+ * @param data The data to be added to the stream.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) PushToRedis(uuid string, max int64, data map[string]interface{}) error {
 	data = rc.addTimestamp(data)
 	return rc.addToStream(uuid, max, data)
 }
 
 /**
-* addTimestamp adds a timestamp to the data map.
-*
-* @param data The data map to which the timestamp is added.
-* @return The updated data map with the timestamp.
-*/
+ * addTimestamp adds a timestamp to the data map.
+ *
+ * @param data The data map to which the timestamp is added.
+ * @return The updated data map with the timestamp.
+ */
 func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface{} {
 	data["timestamp"] = time.Now().Format(time.RFC3339)
 	return data
 }
 
 /**
-* addToStream adds the data to the specified Redis stream with approximate pruning.
-*
-* @param uuid The name of the Redis stream.
-* @param max  The maximum number of records to retain in the stream.
-* @param data The data to be added to the stream.
-* @return An error if the operation fails.
-*/
+ * addToStream adds the data to the specified Redis stream with approximate pruning.
+ *
+ * @param uuid The name of the Redis stream.
+ * @param max  The maximum number of records to retain in the stream.
+ * @param data The data to be added to the stream.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) addToStream(uuid string, max int64, data map[string]interface{}) error {
 	_, err := rc.Client.XAdd(rc.Context, &redis.XAddArgs{
 		Stream: uuid,
@@ -383,11 +383,11 @@ func (rc *Client) addToStream(uuid string, max int64, data map[string]interface{
 }
 
 /**
-* GenerateUUIDMap verifies the current UUID mappings against the provided configurations.
-*
-* @param createValidKeysFunc A function that generates a set of valid keys as map[string]interface{}.
-* @return An error if the operation fails.
-*/
+ * GenerateUUIDMap verifies the current UUID mappings against the provided configurations.
+ *
+ * @param createValidKeysFunc A function that generates a set of valid keys as map[string]interface{}.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) GenerateUUIDMap(createValidKeysFunc func() map[string]interface{}) error {
 	validKeys := createValidKeysFunc()
 	if err := rc.applyValidConfigurations(validKeys); err != nil {
@@ -398,12 +398,12 @@ func (rc *Client) GenerateUUIDMap(createValidKeysFunc func() map[string]interfac
 }
 
 /**
-* applyValidConfigurations updates the configurations of existing valid keys in the map by calling
-* the UUIDMapper's method to get the UUIDEntry to send to Redis.
-*
-* @param validKeys The map of valid keys with their respective configuration objects.
-* @return An error if the operation fails.
-*/
+ * applyValidConfigurations updates the configurations of existing valid keys in the map by calling
+ * the UUIDMapper's method to get the UUIDEntry to send to Redis.
+ *
+ * @param validKeys The map of valid keys with their respective configuration objects.
+ * @return An error if the operation fails.
+ */
 func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) error {
 	mapping, err := rc.loadUUIDMapFromRedis()
 	if err != nil {
@@ -436,11 +436,11 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
 }
 
 /**
-* ListenForCommands subscribes to the Redis channel and listens for start and stop commands.
-*
-* @param startFunc The function to execute when a start command is received.
-* @param stopFunc  The function to execute when a stop command is received.
-*/
+ * ListenForCommands subscribes to the Redis channel and listens for start and stop commands.
+ *
+ * @param startFunc The function to execute when a start command is received.
+ * @param stopFunc  The function to execute when a stop command is received.
+ */
 func (rc *Client) ListenForCommands(startFunc, stopFunc func() error) {
 	ps := pubsub.NewPubSub(rc.Logger)
 	ctx := rc.Context
