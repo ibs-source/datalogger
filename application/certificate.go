@@ -2,7 +2,7 @@
  * Package certificate provides functionality for generating X.509 certificates
  * and corresponding private keys, with support for both RSA and ECDSA.
  */
-package certificate
+package producer
 
 import (
 	"crypto/ecdsa"
