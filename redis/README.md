@@ -4,9 +4,9 @@ This package provides functionalities for connecting and interacting with Redis,
 
 ## Environment Variables
 
-| Parameter   | Type     | Description                                    | Default                  |
-|-------------|----------|------------------------------------------------|--------------------------|
-| `REDIS_URL` | `string` | The URL of the Redis server.                   | `redis://127.0.0.1:6379` |
+| Parameter   | Type     | Description                  | Default                  |
+| ----------- | -------- | ---------------------------- | ------------------------ |
+| `REDIS_URL` | `string` | The URL of the Redis server. | `redis://127.0.0.1:6379` |
 
 ## Functions
 

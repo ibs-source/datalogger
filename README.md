@@ -1,4 +1,4 @@
-# Guide to Integrating the Datalogger Custom Connector (Updated)
+# Guide to Integrating the Datalogger Custom Connector
 
 Welcome! This guide will help you integrate the Datalogger Custom Connector package into your project. We’ll provide an overview of the main features and guide you through the necessary steps to develop, configure, and integrate your connector.
 
@@ -281,7 +281,7 @@ We use [SemVer](https://semver.org/) for versioning. For the versions available,
 
 ## Authors
 
-* **Paolo Fabris** - *Initial work* - [ubyte.it](https://ubyte.it/)
+- **Paolo Fabris** - _Initial work_ - [ubyte.it](https://ubyte.it/)
 
 See also the list of [contributors](https://github.com/femogas/datalogger/blob/main/CONTRIBUTORS.md) who participated in this project.
 

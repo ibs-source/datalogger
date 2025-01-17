@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/femogas/datalogger/app/configuration"
+	"github.com/femogas/datalogger/appplication/configuration"
 	"github.com/femogas/datalogger/redis/configuration"
 	"github.com/femogas/datalogger/redis/pubsub"
 	"github.com/femogas/datalogger/redis/uuid"

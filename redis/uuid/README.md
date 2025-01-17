@@ -22,7 +22,7 @@ A thread-safe structure that maintains a map between keys and `UUIDEntry` object
 
 - **Fields:**
   - `Mapping` (map[string]UUIDEntry): Stores key-UUIDEntry pairs.
-  - `Logger` (*logrus.Logger): Logger for recording messages.
+  - `Logger` (\*logrus.Logger): Logger for recording messages.
 
 ## Interfaces
 

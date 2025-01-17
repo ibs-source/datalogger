@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/femogas/datalogger/app"
+	"github.com/femogas/datalogger/application"
 	"github.com/femogas/datalogger/server/configuration"
 	"github.com/sirupsen/logrus"
 )
