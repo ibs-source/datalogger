@@ -87,7 +87,7 @@ func buildCertificateTemplate(validFor time.Duration) x509.Certificate {
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(validFor),
 		Subject:               pkix.Name{Organization: []string{"datalogger"}},
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		KeyUsage:              x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 	}
