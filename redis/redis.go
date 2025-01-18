@@ -204,9 +204,6 @@ func (rc *Client) checkAndSyncUUIDMap() error {
 		return err
 	}
 
-	rc.UUIDMapper.Lock()
-	defer rc.UUIDMapper.Unlock()
-
 	if !exists {
 		rc.Logger.Warn("uuid-map does not exist in Redis. Synchronizing from in-memory UUIDMapper to Redis.")
 		return rc.syncUUIDMapToRedis()
@@ -287,13 +284,15 @@ func (rc *Client) verifyAndProcessUUIDMapDifferences(redisUUIDMap map[string]uui
  * @return An error if the operation fails.
  */
 func (rc *Client) syncUUIDMapToRedis() error {
-	if len(rc.UUIDMapper.Mapping) == 0 {
+	// Use a copy of the map to avoid iterating while the map may change.
+	mappingCopy := rc.UUIDMapper.GetMappingCopy()
+	if len(mappingCopy) == 0 {
 		rc.Logger.Warn("UUIDMapper is empty; nothing to synchronize to Redis.")
 		return nil
 	}
 
 	pipeline := rc.Client.Pipeline()
-	if err := rc.addUUIDMapToPipeline(pipeline); err != nil {
+	if err := rc.addUUIDMapToPipeline(pipeline, mappingCopy); err != nil {
 		return err
 	}
 
@@ -309,10 +308,11 @@ func (rc *Client) syncUUIDMapToRedis() error {
  * addUUIDMapToPipeline adds the UUIDMapper's mappings to the provided pipeline.
  *
  * @param pipeline The Redis pipeline.
+ * @param mapping  A copy of the current map to be iterated.
  * @return An error if the operation fails.
  */
-func (rc *Client) addUUIDMapToPipeline(pipeline redis.Pipeliner) error {
-	for key, entry := range rc.UUIDMapper.Mapping {
+func (rc *Client) addUUIDMapToPipeline(pipeline redis.Pipeliner, mapping map[string]uuid.UUIDEntry) error {
+	for key, entry := range mapping {
 		if err := rc.addUUIDEntryToPipeline(pipeline, key, entry); err != nil {
 			return err
 		}
@@ -409,7 +409,9 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
 	if err != nil {
 		return err
 	}
-	rc.UUIDMapper.Mapping = mapping
+
+	// Instead of rc.UUIDMapper.Mapping = mapping, we call ReplaceMapping:
+	rc.UUIDMapper.ReplaceMapping(mapping)
 
 	pipeline := rc.Client.Pipeline()
 

@@ -1,3 +1,6 @@
+/**
+ * Package uuid provides a UUID mapping mechanism to assign and manage UUIDs for endpoints and node IDs.
+ */
 package uuid
 
 import (
@@ -9,10 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
-
-/**
- * Package uuid provides a UUID mapping mechanism to assign and manage UUIDs for endpoints and node IDs.
- */
 
 // UUIDEntry represents an entry in the UUID map, containing the UUID and the associated configuration object.
 type UUIDEntry struct {
@@ -216,4 +215,31 @@ func (um *UUIDMapper) UpsertUUIDEntry(key string, configuration interface{}) (UU
 	}).Info("Generated new UUIDEntry")
 
 	return newEntry, nil
+}
+
+/**
+ * ReplaceMapping replaces the entire internal Mapping with the provided newMap,
+ * protecting the access with a Lock().
+ *
+ * @param newMap The new map of UUIDEntry to set.
+ */
+func (um *UUIDMapper) ReplaceMapping(newMap map[string]UUIDEntry) {
+	um.Lock()
+	defer um.Unlock()
+	um.Mapping = newMap
+}
+
+/**
+ * GetMappingCopy returns a copy of the internal map, protecting the access with RLock().
+ *
+ * @return A copy of the internal map of UUIDEntries.
+ */
+func (um *UUIDMapper) GetMappingCopy() map[string]UUIDEntry {
+	um.RLock()
+	defer um.RUnlock()
+	copyMap := make(map[string]UUIDEntry, len(um.Mapping))
+	for k, v := range um.Mapping {
+		copyMap[k] = v
+	}
+	return copyMap
 }

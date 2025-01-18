@@ -134,10 +134,9 @@ func (srv *Server) shutdownServer(server *http.Server) {
  * @param request The HTTP request.
  */
 func (srv *Server) handleUUIDMapping(writer http.ResponseWriter, request *http.Request) {
-	// Read lock to safely access the UUID mapping.
-	srv.Main.Redis.UUIDMapper.RLock()
-	defer srv.Main.Redis.UUIDMapper.RUnlock()
-	srv.writeJSONResponse(writer, srv.Main.Redis.UUIDMapper.Mapping)
+	// Instead of manual RLock(), use a copy from UUIDMapper:
+	mappingCopy := srv.Main.Redis.UUIDMapper.GetMappingCopy()
+	srv.writeJSONResponse(writer, mappingCopy)
 }
 
 /**

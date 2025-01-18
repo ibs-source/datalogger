@@ -3,7 +3,7 @@ module github.com/femogas/datalogger
 go 1.23.1
 
 retract (
-	[v0.1.4, v1.0.1] // The tags contain some bugs and have been retracted in the next version
+	[v0.1.4, v1.0.2] // The tags contain some bugs and have been retracted in the next version
 )
 
 require (
