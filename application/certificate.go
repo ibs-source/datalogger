@@ -61,12 +61,10 @@ func generateECDSAPrivateKey(curve elliptic.Curve) (*ecdsa.PrivateKey, error) {
 func createCertificate(privateKey interface{}, host string, validFor time.Duration) ([]byte, []byte, error) {
 	template := buildCertificateTemplate(validFor)
 	parseHostsIntoCertificate(host, &template)
-
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, extractPublicKey(privateKey), privateKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
 	}
-
 	return encodeCertificateAndKey(derBytes, privateKey)
 }
 
@@ -125,12 +123,10 @@ func parseHostsIntoCertificate(host string, template *x509.Certificate) {
  */
 func encodeCertificateAndKey(derBytes []byte, privateKey interface{}) ([]byte, []byte, error) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-
 	keyBlock, err := pemBlockForPrivateKey(privateKey)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	keyPEM := pem.EncodeToMemory(keyBlock)
 	return certPEM, keyPEM, nil
 }
@@ -204,12 +200,10 @@ func GenerateCertificate(host string, rsaBits int, validFor time.Duration) ([]by
 	if rsaBits == 0 {
 		rsaBits = 2048
 	}
-
 	privateKey, err := generateRSAPrivateKey(rsaBits)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate RSA key: %w", err)
 	}
-
 	return createCertificate(privateKey, host, validFor)
 }
 
@@ -230,12 +224,10 @@ func GenerateECDSACertificate(host string, curve elliptic.Curve, validFor time.D
 	if len(host) == 0 {
 		return nil, nil, errors.New("missing required host parameter")
 	}
-
 	privateKey, err := generateECDSAPrivateKey(curve)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate ECDSA key: %w", err)
 	}
-
 	return createCertificate(privateKey, host, validFor)
 }
 
@@ -272,7 +264,6 @@ func DecodeRSAPrivateKey(pemData []byte) (*rsa.PrivateKey, error) {
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block for RSA private key")
 	}
-
 	switch block.Type {
 	case "PRIVATE KEY":
 		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)

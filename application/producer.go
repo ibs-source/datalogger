@@ -121,22 +121,23 @@ func ParseHostFromEndpointURL(endpointURL string) (string, error) {
 
 /**
  * Handles incoming OS signals for graceful shutdown.
- * Stops the connector and cancels the application context.
+ * Cancel the application context.
  *
- * @param signals       A channel receiving OS signals.
- * @param application   A pointer to the Main application structure.
- * @param connector     The connector to be stopped.
+ * @param signals     A channel receiving OS signals.
+ * @param application A pointer to the Main application structure.
+ * @param connector   The connector to be stopped.
  */
 func handleSignals(signals chan os.Signal, application *Main, connector Connector) {
-	// Wait for an OS signal.
 	sig := <-signals
-	application.Logger.WithField("signal", sig).Info("Termination signal received, shutting down safely...")
-
-	// Attempt to stop the connector.
-	if err := connector.Stop(); err != nil {
-		application.Logger.WithError(err).Error("Error stopping connector")
-	}
-
-	// Cancel the application context to trigger shutdown.
+	logger := application.Logger.WithField("signal", sig)
+	logger.Info("Termination signal received, shutting down safely...")
+	if connector != nil {
+        logger.Debug("Stopping connector...")
+        if err := connector.Stop(); err != nil {
+            logger.WithError(err).Error("Error stopping connector")
+        }
+    }
+	application.Redis.Close();
 	application.Cancel()
+	logger.Info("Shutdown complete.")
 }

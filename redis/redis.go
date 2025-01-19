@@ -26,6 +26,7 @@ type Client struct {
 	Logger        *logrus.Logger       // Logger for logging messages.
 	UUIDMapper    *uuid.UUIDMapper     // UUIDMapper for mapping UUIDs.
 	Configuration *configuration.Redis // Redis connection settings.
+	PubSub  	  *redis.PubSub        // PubSub client for listening to commands.
 	Context       context.Context      // Context for controlling operations.
 }
 
@@ -91,16 +92,31 @@ func createRedisClient(redisURL string) (*redis.Client, error) {
  * @return An error if closing fails.
  */
 func (rc *Client) Close() error {
+	// Close Pub/Sub subscription first
+    rc.Logger.Debug("Stopping Pub/Sub subscription...")
+    rc.stopPubSub()
 	// Synchronize the UUID map before closing.
+	rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
 	if err := rc.syncUUIDMapToRedis(); err != nil {
 		rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
 	}
-
+	rc.Logger.Debug("Closing Redis client...")
 	if err := rc.Client.Close(); err != nil {
 		rc.Logger.WithError(err).Error("Error closing Redis client")
 		return err
 	}
 	return nil
+}
+
+/**
+ * stopPubSub closes the Pub/Sub subscription, if any.
+ */
+func (rc *Client) stopPubSub() {
+    if rc.PubSub == nil {
+        return
+    }
+    rc.PubSub.Close()
+    rc.PubSub = nil
 }
 
 /**
@@ -113,17 +129,14 @@ func (rc *Client) redisConnectionMonitor() {
 			return
 		default:
 		}
-
 		err := rc.checkRedisConnection()
 		if err == nil {
 			// Connection is healthy; no action needed.
 			time.Sleep(30 * time.Second)
 			continue
 		}
-
 		// Connection is lost; attempt to reconnect.
 		rc.Logger.WithError(err).Error("Redis connection lost. Attempting to reconnect...")
-
 		err = rc.retryPing(24, 2*time.Second)
 		if err != nil {
 			// Unable to reconnect.
@@ -131,10 +144,8 @@ func (rc *Client) redisConnectionMonitor() {
 			time.Sleep(30 * time.Second)
 			continue
 		}
-
 		// Reconnected successfully.
 		rc.Logger.Info("Redis connection reestablished.")
-
 		// After reconnection, synchronize the UUID map.
 		if err := rc.checkAndSyncUUIDMap(); err != nil {
 			rc.Logger.WithError(err).Error("Error synchronizing uuid-map after reconnection")
@@ -203,21 +214,17 @@ func (rc *Client) checkAndSyncUUIDMap() error {
 	if err != nil {
 		return err
 	}
-
 	if !exists {
 		rc.Logger.Warn("uuid-map does not exist in Redis. Synchronizing from in-memory UUIDMapper to Redis.")
 		return rc.syncUUIDMapToRedis()
 	}
-
 	redisUUIDMap, err := rc.loadUUIDMapFromRedis()
 	if err != nil {
 		return err
 	}
-
 	if err := rc.verifyAndProcessUUIDMapDifferences(redisUUIDMap); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -244,7 +251,6 @@ func (rc *Client) loadUUIDMapFromRedis() (map[string]uuid.UUIDEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error loading uuid-map from Redis: %w", err)
 	}
-
 	create := make(map[string]uuid.UUIDEntry)
 	for key, value := range result {
 		var entry uuid.UUIDEntry
@@ -268,9 +274,7 @@ func (rc *Client) verifyAndProcessUUIDMapDifferences(redisUUIDMap map[string]uui
 		rc.Logger.Info("uuid-map in Redis is consistent with in-memory UUIDMapper. No action required.")
 		return nil
 	}
-
 	rc.Logger.Warn("Discrepancies found between in-memory UUIDMapper and Redis uuid-map. Processing differences.")
-
 	// Overwrite the uuid-map in Redis with the in-memory UUIDMapper
 	if err := rc.syncUUIDMapToRedis(); err != nil {
 		return fmt.Errorf("error synchronizing uuid-map to Redis: %w", err)
@@ -290,16 +294,13 @@ func (rc *Client) syncUUIDMapToRedis() error {
 		rc.Logger.Warn("UUIDMapper is empty; nothing to synchronize to Redis.")
 		return nil
 	}
-
 	pipeline := rc.Client.Pipeline()
 	if err := rc.addUUIDMapToPipeline(pipeline, mappingCopy); err != nil {
 		return err
 	}
-
 	if _, err := pipeline.Exec(rc.Context); err != nil {
 		return fmt.Errorf("error synchronizing uuid-map to Redis: %w", err)
 	}
-
 	rc.Logger.Info("uuid-map synchronized to Redis successfully.")
 	return nil
 }
@@ -393,7 +394,6 @@ func (rc *Client) GenerateUUIDMap(createValidKeysFunc func() map[string]interfac
 	if err := rc.applyValidConfigurations(validKeys); err != nil {
 		return fmt.Errorf("error applying valid configurations: %w", err)
 	}
-
 	return nil
 }
 
@@ -409,12 +409,9 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
 	if err != nil {
 		return err
 	}
-
 	// Instead of rc.UUIDMapper.Mapping = mapping, we call ReplaceMapping:
 	rc.UUIDMapper.ReplaceMapping(mapping)
-
 	pipeline := rc.Client.Pipeline()
-
 	for key, configuration := range validKeys {
 		// Call the method in UUIDMapper to get the UUIDEntry
 		entry, err := rc.UUIDMapper.UpsertUUIDEntry(key, configuration)
@@ -422,18 +419,15 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
 			rc.Logger.WithError(err).Errorf("Error processing key %s", key)
 			return err
 		}
-
 		// Add the UUIDEntry to the pipeline to be sent to Redis
 		if err := rc.addUUIDEntryToPipeline(pipeline, key, entry); err != nil {
 			return err
 		}
 	}
-
 	// Execute the pipeline after adding all commands.
 	if _, err := pipeline.Exec(rc.Context); err != nil {
 		return fmt.Errorf("error executing pipeline: %w", err)
 	}
-
 	return nil
 }
 
@@ -444,25 +438,31 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
  * @param stopFunc  The function to execute when a stop command is received.
  */
 func (rc *Client) ListenForCommands(startFunc, stopFunc func() error) {
-	ps := pubsub.NewPubSub(rc.Logger)
-	ctx := rc.Context
-
-	pubsubClient := rc.Client.Subscribe(ctx, "remote-control")
-	defer pubsubClient.Close()
-
-	ch := pubsubClient.Channel()
-	handlers := map[string]pubsub.CommandHandler{
-		"start": startFunc,
-		"stop":  stopFunc,
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			ps.Logger.Info("Stopping command listener")
-			return
-		case msg := <-ch:
-			ps.HandleCommand(msg.Payload, handlers)
-		}
-	}
+    ps := pubsub.NewPubSub(rc.Logger)
+    ctx := rc.Context
+    // Subscribe without deferring pubsubClient.Close()
+    rc.PubSub = rc.Client.Subscribe(ctx, "remote-control")
+    // Retrieve the channel to read messages from.
+    ch := rc.PubSub.Channel()
+    handlers := map[string]pubsub.CommandHandler{
+        "start": startFunc,
+        "stop":  stopFunc,
+    }
+    for {
+        select {
+        case <-ctx.Done():
+            // Context is canceled: stop listening and close the Pub/Sub client
+            ps.Logger.Info("Stopping command listener")
+            rc.PubSub.Close() // Explicitly close the subscription
+            return
+        case msg, ok := <-ch:
+            // If the channel is closed or invalid, exit the loop to avoid panics
+            if !ok {
+                ps.Logger.Warn("PubSub channel closed unexpectedly")
+                return
+            }
+            // Handle the incoming command if available
+            ps.HandleCommand(msg.Payload, handlers)
+        }
+    }
 }

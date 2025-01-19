@@ -46,18 +46,15 @@ func NewPubSub(logger *logrus.Logger) *PubSub {
  */
 func (ps *PubSub) HandleCommand(command string, handlers map[string]CommandHandler) {
 	ps.logReceivedCommand(command)
-
 	handler, exists := handlers[command]
 	if !exists {
 		ps.logUnknownCommand(command)
 		return
 	}
-
 	if err := ps.executeHandler(handler); err != nil {
 		ps.logHandlerError(err, command)
 		return
 	}
-
 	ps.logCommandSuccess(command)
 }
 

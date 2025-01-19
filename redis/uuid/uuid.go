@@ -80,16 +80,13 @@ func marshalCanonical(v interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	// Unmarshal into an interface{}
 	var decoded interface{}
 	if err := json.Unmarshal(tmp, &decoded); err != nil {
 		return nil, err
 	}
-
 	// Recursively normalize the structure
 	normalized := normalizeValue(decoded)
-
 	// Final Marshal of the normalized structure
 	return json.Marshal(normalized)
 }
@@ -147,7 +144,6 @@ func NewUUIDMapper(logger *logrus.Logger) *UUIDMapper {
 func (um *UUIDMapper) Equals(other map[string]UUIDEntry) bool {
 	um.RLock()
 	defer um.RUnlock()
-
 	if len(um.Mapping) != len(other) {
 		return false
 	}
@@ -191,7 +187,6 @@ func (um *UUIDMapper) GenerateUUID() string {
 func (um *UUIDMapper) UpsertUUIDEntry(key string, configuration interface{}) (UUIDEntry, error) {
 	um.Lock()
 	defer um.Unlock()
-
 	if entry, exists := um.Mapping[key]; exists {
 		if !entry.EqualConfiguration(configuration) {
 			entry.Configuration = configuration
@@ -200,20 +195,17 @@ func (um *UUIDMapper) UpsertUUIDEntry(key string, configuration interface{}) (UU
 		}
 		return entry, nil
 	}
-
 	// Generate new UUID for new keys.
 	uuidStr := um.GenerateUUID()
 	newEntry := UUIDEntry{
 		UUID:          uuidStr,
 		Configuration: configuration,
 	}
-
 	um.Mapping[key] = newEntry
 	um.Logger.WithFields(logrus.Fields{
 		"key":  key,
 		"uuid": uuidStr,
 	}).Info("Generated new UUIDEntry")
-
 	return newEntry, nil
 }
 
