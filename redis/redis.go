@@ -352,14 +352,16 @@ func (rc *Client) PushToRedis(uuid string, max int64, data map[string]interface{
 }
 
 /**
- * addTimestamp adds a timestamp to the data map.
+ * addTimestamp adds a timestamp to the data map if it does not already exist.
  *
- * @param data The data map to which the timestamp is added.
- * @return The updated data map with the timestamp.
+ * @param data The data map to which the timestamp is conditionally added.
+ * @return The updated data map with the timestamp, if it was not already present.
  */
 func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface{} {
-	data["timestamp"] = time.Now().Format(time.RFC3339)
-	return data
+    if _, exists := data["timestamp"]; !exists {
+		data["timestamp"] = time.Now().UnixMilli()
+	}
+    return data
 }
 
 /**
