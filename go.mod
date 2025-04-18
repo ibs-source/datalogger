@@ -1,4 +1,4 @@
-module github.com/femogas/datalogger
+module github.com/ibs-source/datalogger
 
 go 1.23.1
 

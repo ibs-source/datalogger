@@ -12,8 +12,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/femogas/datalogger/application/configuration"
-	"github.com/femogas/datalogger/redis"
+	"github.com/ibs-source/datalogger/application/configuration"
+	"github.com/ibs-source/datalogger/redis"
 	"github.com/sirupsen/logrus"
 )
 

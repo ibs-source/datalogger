@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/femogas/datalogger/application/configuration"
-	"github.com/femogas/datalogger/redis/configuration"
-	"github.com/femogas/datalogger/redis/pubsub"
-	"github.com/femogas/datalogger/redis/uuid"
+	"github.com/ibs-source/datalogger/application/configuration"
+	"github.com/ibs-source/datalogger/redis/configuration"
+	"github.com/ibs-source/datalogger/redis/pubsub"
+	"github.com/ibs-source/datalogger/redis/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )

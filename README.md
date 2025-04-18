@@ -17,7 +17,7 @@ This project provides a framework for creating connectors that interact with a R
 To use the Datalogger Custom Connector in your project, add it as a dependency in your `go.mod` file:
 
 ```bash
-go get github.com/femogas/datalogger
+go get github.com/ibs-source/datalogger
 ```
 
 Ensure that the package is properly installed and available in your project.
@@ -39,7 +39,7 @@ The project is divided into several key packages:
 To initialize global configuration, use the `InitializeGlobalConfiguration()` function from the `global` package. This function reads environment variables and command-line flags to set configuration values.
 
 ```go
-import "github.com/femogas/datalogger/application/configuration"
+import "github.com/ibs-source/datalogger/application/configuration"
 
 config := configuration.InitializeGlobalConfiguration()
 ```
@@ -55,7 +55,7 @@ The logger is essential for monitoring the operation of your connector. Initiali
 - `2`: ErrorLevel (errors only)
 
 ```go
-import "github.com/femogas/datalogger/application"
+import "github.com/ibs-source/datalogger/application"
 
 logger := application.InitializeLogger(config.DebugMode)
 ```
@@ -69,7 +69,7 @@ To interact with Redis, create a new client using `NewClient(logger *logrus.Logg
 ```go
 import (
     "context"
-    "github.com/femogas/datalogger/redis"
+    "github.com/ibs-source/datalogger/redis"
 )
 
 ctx, cancel := context.WithCancel(context.Background())
@@ -124,10 +124,10 @@ To use the connector, you need to create an instance of your connector struct an
 import (
     "context"
     "sync"
-    "github.com/femogas/datalogger/application"
-    "github.com/femogas/datalogger/application/configuration"
-    "github.com/femogas/datalogger/redis"
-    "github.com/femogas/datalogger/server"
+    "github.com/ibs-source/datalogger/application"
+    "github.com/ibs-source/datalogger/application/configuration"
+    "github.com/ibs-source/datalogger/redis"
+    "github.com/ibs-source/datalogger/server"
     "github.com/sirupsen/logrus"
 )
 
@@ -243,7 +243,7 @@ This example demonstrates how to integrate the connector lifecycle with Redis an
 To ensure a clean application shutdown, use `SetupSignalHandling` from the `producer` package. This will listen for system signals like `SIGINT` and `SIGTERM` and call appropriate methods to stop the connector.
 
 ```go
-import "github.com/femogas/datalogger/application"
+import "github.com/ibs-source/datalogger/application"
 
 producer.SetupSignalHandling(appInstance, connector)
 ```
@@ -255,7 +255,7 @@ Proper signal handling ensures that the application resources are released grace
 The Datalogger Custom Connector includes an HTTP server for integration purposes. Use `NewServer` from the `server` package to initialize and run the HTTP server:
 
 ```go
-import "github.com/femogas/datalogger/server"
+import "github.com/ibs-source/datalogger/server"
 
 httpServer := server.NewServer(appInstance, logger)
 if err := httpServer.Start(); err != nil {
@@ -277,14 +277,14 @@ This setup allows you to control the connector dynamically, responding to extern
 
 ## Versioning
 
-We use [SemVer](https://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/femogas/datalogger/tags).
+We use [SemVer](https://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/ibs-source/datalogger/tags).
 
 ## Authors
 
 - **Paolo Fabris** - _Initial work_ - [ubyte.it](https://ubyte.it/)
 
-See also the list of [contributors](https://github.com/femogas/datalogger/blob/main/CONTRIBUTORS.md) who participated in this project.
+See also the list of [contributors](https://github.com/ibs-source/datalogger/blob/main/CONTRIBUTORS.md) who participated in this project.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/femogas/datalogger/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/ibs-source/datalogger/blob/main/LICENSE) file for details.

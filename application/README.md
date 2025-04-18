@@ -185,7 +185,7 @@ import (
     "log"
     "time"
 
-    "github.com/femogas/datalogger/application"
+    "github.com/ibs-source/datalogger/application"
 )
 
 func main() {
