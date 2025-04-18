@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/femogas/datalogger/application/configuration"
@@ -18,6 +19,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// streamItem encapsulates a Redis Stream XADD command for async batching.
+type streamItem struct {
+	Stream string
+	MaxLen int64
+	Values map[string]interface{}
+}
+
 /**
  * Client encapsulates the Redis client and related configurations.
  */
@@ -26,8 +34,13 @@ type Client struct {
 	Logger        *logrus.Logger       // Logger for logging messages.
 	UUIDMapper    *uuid.UUIDMapper     // UUIDMapper for mapping UUIDs.
 	Configuration *configuration.Redis // Redis connection settings.
-	PubSub  	  *redis.PubSub        // PubSub client for listening to commands.
+	PubSub        *redis.PubSub        // PubSub client for listening to commands.
 	Context       context.Context      // Context for controlling operations.
+	// Async batching fields
+	asyncCh           chan streamItem  // Channel for async streamItems
+	asyncWg           sync.WaitGroup   // WaitGroup for async publisher
+	asyncBatchSize    int              // Number of items per batch
+	asyncBatchTimeout time.Duration    // Max time before auto-flush
 }
 
 /**
@@ -93,13 +106,15 @@ func createRedisClient(redisURL string) (*redis.Client, error) {
  */
 func (rc *Client) Close() error {
 	// Close Pub/Sub subscription first
-    rc.Logger.Debug("Stopping Pub/Sub subscription...")
-    rc.stopPubSub()
+	rc.Logger.Debug("Stopping Pub/Sub subscription...")
+	rc.stopPubSub()
 	// Synchronize the UUID map before closing.
 	rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
 	if err := rc.syncUUIDMapToRedis(); err != nil {
 		rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
 	}
+	// Disable async batching if enabled
+	rc.DisableAsyncBatching()
 	rc.Logger.Debug("Closing Redis client...")
 	if err := rc.Client.Close(); err != nil {
 		rc.Logger.WithError(err).Error("Error closing Redis client")
@@ -112,11 +127,11 @@ func (rc *Client) Close() error {
  * stopPubSub closes the Pub/Sub subscription, if any.
  */
 func (rc *Client) stopPubSub() {
-    if rc.PubSub == nil {
-        return
-    }
-    rc.PubSub.Close()
-    rc.PubSub = nil
+	if rc.PubSub == nil {
+		return
+	}
+	rc.PubSub.Close()
+	rc.PubSub = nil
 }
 
 /**
@@ -358,10 +373,10 @@ func (rc *Client) PushToRedis(uuid string, max int64, data map[string]interface{
  * @return The updated data map with the timestamp, if it was not already present.
  */
 func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface{} {
-    if _, exists := data["timestamp"]; !exists {
+	if _, exists := data["timestamp"]; !exists {
 		data["timestamp"] = time.Now().UnixMilli()
 	}
-    return data
+	return data
 }
 
 /**
@@ -383,6 +398,128 @@ func (rc *Client) addToStream(uuid string, max int64, data map[string]interface{
 		rc.Logger.WithError(err).Error("Error adding message to stream")
 	}
 	return err
+}
+
+/**
+ * PushToRedisAsync enqueues a stream entry for asynchronous batched XADD.
+ *
+ * @param uuid The name of the Redis stream.
+ * @param max  The maximum number of records to retain in the stream.
+ * @param data The data to be added to the stream.
+ * @return An error if async batching is not enabled or context is canceled.
+ */
+func (rc *Client) PushToRedisAsync(uuid string, max int64, data map[string]interface{}) error {
+	if rc.asyncCh == nil {
+		return fmt.Errorf("async batching not enabled")
+	}
+	data = rc.addTimestamp(data)
+	select {
+	case rc.asyncCh <- streamItem{Stream: uuid, MaxLen: max, Values: data}:
+		return nil
+	case <-rc.Context.Done():
+		return fmt.Errorf("context canceled")
+	}
+}
+
+/**
+ * EnableAsyncBatching enables asynchronous batched XADD operations.
+ *
+ * @param batchSize    The number of records per pipeline batch.
+ * @param batchTimeout The maximum wait time before flushing a batch.
+ */
+func (rc *Client) EnableAsyncBatching(batchSize int, batchTimeout time.Duration) {
+	if rc.asyncCh != nil {
+		return
+	}
+	rc.asyncBatchSize = batchSize
+	rc.asyncBatchTimeout = batchTimeout
+	rc.asyncCh = make(chan streamItem, batchSize*2)
+	rc.asyncWg.Add(1)
+	go rc.runAsyncPublisher()
+}
+
+/**
+ * runAsyncPublisher runs in a goroutine to batch and flush stream items.
+ */
+func (rc *Client) runAsyncPublisher() {
+	defer rc.asyncWg.Done()
+	// Ticker to force periodic flush
+	ticker := time.NewTicker(rc.asyncBatchTimeout)
+	defer ticker.Stop()
+
+	// Batch buffer
+	batch := make([]streamItem, 0, rc.asyncBatchSize)
+
+	for {
+		select {
+		case it, ok := <-rc.asyncCh:
+			if !ok {
+				// Channel closed: flush remaining and exit
+				rc.flushBatch(&batch)
+				return
+			}
+			// Add item and flush if capacity reached
+			batch = rc.appendToBatch(batch, it)
+			if len(batch) >= rc.asyncBatchSize {
+				rc.flushBatch(&batch)
+			}
+
+		case <-ticker.C:
+			// Timeout: flush whatever’s in batch
+			rc.flushBatch(&batch)
+
+		case <-rc.Context.Done():
+			// Context cancelled: final flush and exit
+			rc.flushBatch(&batch)
+			return
+		}
+	}
+}
+
+/**
+ * appendToBatch appends the given streamItem to the provided batch slice.
+ *
+ * @param batch The current slice of streamItem entries.
+ * @param it    The streamItem to append to the batch.
+ * @return A new slice containing all previous batch items plus the new item.
+ */
+func (rc *Client) appendToBatch(batch []streamItem, it streamItem) []streamItem {
+    return append(batch, it)
+}
+
+/**
+ * flushBatch sends all items in the batch to Redis in a single pipeline
+ * and then resets the batch to an empty slice.
+ *
+ * @param batch A pointer to the slice of streamItem entries to flush.
+ */
+func (rc *Client) flushBatch(batch *[]streamItem) {
+    if len(*batch) == 0 {
+        return
+    }
+    pipe := rc.Client.Pipeline()
+    for _, it := range *batch {
+        pipe.XAdd(rc.Context, &redis.XAddArgs{
+            Stream: it.Stream,
+            ID:     "*",
+            Values: it.Values,
+            MaxLen: it.MaxLen,
+        })
+    }
+    pipe.Exec(rc.Context)
+    *batch = (*batch)[:0]
+}
+
+/**
+ * DisableAsyncBatching disables async batching and flushes remaining items.
+ */
+func (rc *Client) DisableAsyncBatching() {
+	if rc.asyncCh == nil {
+		return
+	}
+	close(rc.asyncCh)
+	rc.asyncWg.Wait()
+	rc.asyncCh = nil
 }
 
 /**
@@ -440,31 +577,31 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
  * @param stopFunc  The function to execute when a stop command is received.
  */
 func (rc *Client) ListenForCommands(startFunc, stopFunc func() error) {
-    ps := pubsub.NewPubSub(rc.Logger)
-    ctx := rc.Context
-    // Subscribe without deferring pubsubClient.Close()
-    rc.PubSub = rc.Client.Subscribe(ctx, "remote-control")
-    // Retrieve the channel to read messages from.
-    ch := rc.PubSub.Channel()
-    handlers := map[string]pubsub.CommandHandler{
-        "start": startFunc,
-        "stop":  stopFunc,
-    }
-    for {
-        select {
-        case <-ctx.Done():
-            // Context is canceled: stop listening and close the Pub/Sub client
-            ps.Logger.Info("Stopping command listener")
-            rc.PubSub.Close() // Explicitly close the subscription
-            return
-        case msg, ok := <-ch:
-            // If the channel is closed or invalid, exit the loop to avoid panics
-            if !ok {
-                ps.Logger.Warn("PubSub channel closed unexpectedly")
-                return
-            }
-            // Handle the incoming command if available
-            ps.HandleCommand(msg.Payload, handlers)
-        }
-    }
+	ps := pubsub.NewPubSub(rc.Logger)
+	ctx := rc.Context
+	// Subscribe without deferring pubsubClient.Close()
+	rc.PubSub = rc.Client.Subscribe(ctx, "remote-control")
+	// Retrieve the channel to read messages from.
+	ch := rc.PubSub.Channel()
+	handlers := map[string]pubsub.CommandHandler{
+		"start": startFunc,
+		"stop":  stopFunc,
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			// Context is canceled: stop listening and close the Pub/Sub client
+			ps.Logger.Info("Stopping command listener")
+			rc.PubSub.Close() // Explicitly close the subscription
+			return
+		case msg, ok := <-ch:
+			// If the channel is closed or invalid, exit the loop to avoid panics
+			if !ok {
+				ps.Logger.Warn("PubSub channel closed unexpectedly")
+				return
+			}
+			// Handle the incoming command if available
+			ps.HandleCommand(msg.Payload, handlers)
+		}
+	}
 }
