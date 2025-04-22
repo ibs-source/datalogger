@@ -64,13 +64,12 @@ func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.Cancel
 		Configuration: config,
 		Context:       ctx,
 	}
-
 	// Start the Redis connection monitor as a goroutine.
 	go rc.redisConnectionMonitor()
-
 	// Start the periodic UUID map synchronization as a goroutine.
-	go rc.uuidMapSyncTicker()
-
+	if len(rc.UUIDMapper.GetMappingCopy()) > 0 {
+    	go rc.uuidMapSyncTicker()
+  	}
 	return rc, nil
 }
 
@@ -109,9 +108,11 @@ func (rc *Client) Close() error {
 	rc.Logger.Debug("Stopping Pub/Sub subscription...")
 	rc.stopPubSub()
 	// Synchronize the UUID map before closing.
-	rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
-	if err := rc.syncUUIDMapToRedis(); err != nil {
-		rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
+	if len(rc.UUIDMapper.GetMappingCopy()) > 0 {
+		rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
+		if err := rc.syncUUIDMapToRedis(); err != nil {
+			rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
+		}
 	}
 	// Disable async batching if enabled
 	rc.DisableAsyncBatching()
