@@ -50,10 +50,9 @@ type Client struct {
  *
  * @param logger A logger instance for logging.
  * @param ctx    The context for client operations.
- * @param cancel A cancel function to stop the context.
  * @return A pointer to the initialized Client and an error if any occurred.
  */
-func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc) (*Client, error) {
+func NewClient(logger *logrus.Logger, ctx context.Context) (*Client, error) {
 	config := loadConfig()
 	client, err := createRedisClient(config.RedisURL)
 		if err != nil {
