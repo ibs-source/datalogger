@@ -5,6 +5,7 @@
 package redis
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,7 @@ type Client struct {
 	asyncBatchTimeout time.Duration    // Max time before auto-flush
 }
 
+
 /**
  * NewClient initializes and returns a new Redis client.
  *
@@ -54,7 +56,7 @@ type Client struct {
 func NewClient(logger *logrus.Logger, ctx context.Context, cancel context.CancelFunc) (*Client, error) {
 	config := loadConfig()
 	client, err := createRedisClient(config.RedisURL)
-	if err != nil {
+		if err != nil {
 		return nil, err
 	}
 	rc := &Client{
@@ -125,6 +127,18 @@ func (rc *Client) Close() error {
 }
 
 /**
+ * cancellableDelay sleeps for the given duration or returns early if the context is canceled.
+ */
+func (rc *Client) cancellableDelay(duration time.Duration) bool {
+    select {
+    case <-time.After(duration):
+        return true
+    case <-rc.Context.Done():
+        return false
+    }
+}
+
+/**
  * stopPubSub closes the Pub/Sub subscription, if any.
  */
 func (rc *Client) stopPubSub() {
@@ -139,36 +153,42 @@ func (rc *Client) stopPubSub() {
  * redisConnectionMonitor monitors the Redis connection and handles reconnection.
  */
 func (rc *Client) redisConnectionMonitor() {
-	for {
-		select {
-		case <-rc.Context.Done():
-			return
-		default:
-		}
+    for {
+        if rc.Context.Err() != nil {
+            rc.Logger.Info("Redis monitor stopping (context canceled)")
+            return
+        }
 		err := rc.checkRedisConnection()
-		if err == nil {
-			// Connection is healthy; no action needed.
-			time.Sleep(30 * time.Second)
-			continue
-		}
-		// Connection is lost; attempt to reconnect.
-		rc.Logger.WithError(err).Error("Redis connection lost. Attempting to reconnect...")
-		err = rc.retryPing(24, 2*time.Second)
-		if err != nil {
-			// Unable to reconnect.
-			rc.Logger.WithError(err).Error("Unable to reconnect to Redis.")
-			time.Sleep(30 * time.Second)
-			continue
-		}
-		// Reconnected successfully.
-		rc.Logger.Info("Redis connection reestablished.")
-		// After reconnection, synchronize the UUID map.
-		if err := rc.checkAndSyncUUIDMap(); err != nil {
-			rc.Logger.WithError(err).Error("Error synchronizing uuid-map after reconnection")
-		}
-
-		time.Sleep(30 * time.Second)
-	}
+        if err == nil {
+            if !rc.cancellableDelay(30 * time.Second) {
+                rc.Logger.Info("Redis monitor stopping (context canceled)")
+                return
+            }
+            continue
+        }
+        rc.Logger.WithError(err).Error("Redis connection lost. Attempting to reconnect...")
+        reconnectErr := rc.retryPing(24, 2*time.Second)
+        if reconnectErr != nil {
+            if errors.Is(reconnectErr, context.Canceled) {
+                rc.Logger.Info("Redis monitor stopping (context canceled)")
+                return
+            }
+            rc.Logger.WithError(reconnectErr).Error("Unable to reconnect to Redis.")
+            if !rc.cancellableDelay(30 * time.Second) {
+                rc.Logger.Info("Redis monitor stopping (context canceled)")
+                return
+            }
+            continue
+        }
+        rc.Logger.Info("Redis connection reestablished.")
+        if syncErr := rc.checkAndSyncUUIDMap(); syncErr != nil {
+            rc.Logger.WithError(syncErr).Error("Error synchronizing uuid-map after reconnection")
+        }
+        if !rc.cancellableDelay(30 * time.Second) {
+            rc.Logger.Info("Redis monitor stopping (context canceled)")
+            return
+        }
+    }
 }
 
 /**
@@ -198,6 +218,7 @@ func (rc *Client) uuidMapSyncTicker() {
 	}
 }
 
+
 /**
  * retryPing attempts to ping Redis multiple times with a delay between attempts.
  *
@@ -206,18 +227,22 @@ func (rc *Client) uuidMapSyncTicker() {
  * @return An error if unable to connect after max retries.
  */
 func (rc *Client) retryPing(maxRetries int, retryDelay time.Duration) error {
-	var err error
-	for i := 0; i < maxRetries; i++ {
-		if _, err = rc.Client.Ping(rc.Context).Result(); err == nil {
-			return nil
-		}
-		rc.Logger.WithFields(logrus.Fields{
-			"retry":      i + 1,
-			"maxRetries": maxRetries,
-		}).WithError(err).Errorf("Error connecting to Redis. Retrying in %v...", retryDelay)
-		time.Sleep(retryDelay)
-	}
-	return fmt.Errorf("unable to connect to Redis after %d attempts: %w", maxRetries, err)
+    var err error
+    for i := 0; i < maxRetries; i++ {
+        if rc.Context.Err() != nil {
+            return rc.Context.Err()
+        }
+        if _, err = rc.Client.Ping(rc.Context).Result(); err == nil {
+            return nil
+        }
+        rc.Logger.WithFields(logrus.Fields{"retry": i + 1, "maxRetries": maxRetries}).
+            WithError(err).
+            Errorf("Error connecting to Redis. Retrying in %v...", retryDelay)
+        if !rc.cancellableDelay(retryDelay) {
+            return rc.Context.Err()
+        }
+    }
+    return fmt.Errorf("unable to connect to Redis after %d attempts: %w", maxRetries, err)
 }
 
 /**
