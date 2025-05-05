@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -127,14 +128,30 @@ func (rc *Client) Close() error {
 
 /**
  * cancellableDelay sleeps for the given duration or returns early if the context is canceled.
+ * Returns true if the full duration was waited, false if interrupted by context cancellation.
  */
 func (rc *Client) cancellableDelay(duration time.Duration) bool {
     select {
     case <-time.After(duration):
         return true
     case <-rc.Context.Done():
+        // Important: don't log context cancellation here to avoid duplicate logs
         return false
     }
+}
+
+/**
+ * isContextCanceled checks if the context is canceled and logs a message if it is.
+ *
+ * @param message The message to log if the context is canceled.
+ * @return True if the context is canceled, false otherwise.
+ */
+func (rc *Client) isContextCanceled(message string) bool {
+    if rc.Context.Err() != nil {
+        rc.Logger.Info(message)
+        return true
+    }
+    return false
 }
 
 /**
@@ -152,41 +169,88 @@ func (rc *Client) stopPubSub() {
  * redisConnectionMonitor monitors the Redis connection and handles reconnection.
  */
 func (rc *Client) redisConnectionMonitor() {
+    consecutiveFailures := 0
     for {
-        if rc.Context.Err() != nil {
-            rc.Logger.Info("Redis monitor stopping (context canceled)")
+        if rc.isContextCanceled("Redis monitor stopping (context canceled)") {
             return
         }
-		err := rc.checkRedisConnection()
-        if err == nil {
-            if !rc.cancellableDelay(30 * time.Second) {
-                rc.Logger.Info("Redis monitor stopping (context canceled)")
-                return
-            }
+        if rc.handleConnectionCheck(&consecutiveFailures) || rc.handleReconnectionFailure(&consecutiveFailures) {
             continue
         }
-        rc.Logger.WithError(err).Error("Redis connection lost. Attempting to reconnect...")
-        reconnectErr := rc.retryPing(24, 2*time.Second)
-        if reconnectErr != nil {
-            if errors.Is(reconnectErr, context.Canceled) {
-                rc.Logger.Info("Redis monitor stopping (context canceled)")
-                return
-            }
-            rc.Logger.WithError(reconnectErr).Error("Unable to reconnect to Redis.")
-            if !rc.cancellableDelay(30 * time.Second) {
-                rc.Logger.Info("Redis monitor stopping (context canceled)")
-                return
-            }
-            continue
-        }
-        rc.Logger.Info("Redis connection reestablished.")
-        if syncErr := rc.checkAndSyncUUIDMap(); syncErr != nil {
-            rc.Logger.WithError(syncErr).Error("Error synchronizing uuid-map after reconnection")
-        }
+        rc.handleSuccessfulReconnection()
         if !rc.cancellableDelay(30 * time.Second) {
-            rc.Logger.Info("Redis monitor stopping (context canceled)")
             return
         }
+    }
+}
+
+/**
+ * handleConnectionCheck checks the Redis connection status and resets the failure counter on success.
+ *
+ * @param consecutiveFailures Pointer to the failure counter.
+ * @return True if the connection is healthy, false otherwise.
+ */
+func (rc *Client) handleConnectionCheck(consecutiveFailures *int) bool {
+    err := rc.checkRedisConnection()
+    if err == nil {
+        // Reset counter on successful connection
+        *consecutiveFailures = 0
+        if !rc.cancellableDelay(30 * time.Second) {
+            return true
+        }
+        return true
+    }
+    rc.Logger.WithError(err).Error("Redis connection lost. Attempting to reconnect...")
+    return false
+}
+
+/**
+ * handleReconnectionFailure processes a failed reconnection attempt.
+ *
+ * @param consecutiveFailures Pointer to the failure counter.
+ * @return True if processing should continue, false if reconnection succeeded.
+ */
+func (rc *Client) handleReconnectionFailure(consecutiveFailures *int) bool {
+    reconnectErr := rc.retryPing(24, 2*time.Second)
+    if reconnectErr == nil {
+        return false // Reconnection successful, don't continue this handler
+    }
+    *consecutiveFailures++
+    if errors.Is(reconnectErr, context.Canceled) {
+        return true
+    }
+    rc.Logger.WithError(reconnectErr).WithField("consecutiveFailures", *consecutiveFailures).Error("Unable to reconnect to Redis.")
+    return rc.handleBackoffStrategy(*consecutiveFailures)
+}
+
+/**
+ * handleBackoffStrategy applies exponential backoff based on consecutive failures.
+ *
+ * @param consecutiveFailures The current number of consecutive failures.
+ * @return True to continue retrying, false if the context was canceled.
+ */
+func (rc *Client) handleBackoffStrategy(consecutiveFailures int) bool {
+    const maxConsecutiveFailures = 30
+    if consecutiveFailures >= maxConsecutiveFailures {
+        rc.Logger.Error("Too many consecutive reconnection failures, backing off")
+        // Exponential backoff to prevent CPU spinning
+        backoffTime := time.Duration(math.Min(float64(consecutiveFailures * 5), 300)) * time.Second
+        if !rc.cancellableDelay(backoffTime) {
+            return false
+        }
+    } else if !rc.cancellableDelay(30 * time.Second) {
+        return false
+    }
+    return true
+}
+
+/**
+ * handleSuccessfulReconnection processes steps after a successful reconnection.
+ */
+func (rc *Client) handleSuccessfulReconnection() {
+    rc.Logger.Info("Redis connection reestablished.")
+    if syncErr := rc.checkAndSyncUUIDMap(); syncErr != nil {
+        rc.Logger.WithError(syncErr).Error("Error synchronizing uuid-map after reconnection")
     }
 }
 
@@ -328,37 +392,105 @@ func (rc *Client) verifyAndProcessUUIDMapDifferences(redisUUIDMap map[string]uui
  * @return An error if the operation fails.
  */
 func (rc *Client) syncUUIDMapToRedis() error {
-	// Use a copy of the map to avoid iterating while the map may change.
-	mappingCopy := rc.UUIDMapper.GetMappingCopy()
-	if len(mappingCopy) == 0 {
-		rc.Logger.Warn("UUIDMapper is empty; nothing to synchronize to Redis.")
-		return nil
-	}
-	pipeline := rc.Client.Pipeline()
-	if err := rc.addUUIDMapToPipeline(pipeline, mappingCopy); err != nil {
-		return err
-	}
-	if _, err := pipeline.Exec(rc.Context); err != nil {
-		return fmt.Errorf("error synchronizing uuid-map to Redis: %w", err)
-	}
-	rc.Logger.Info("uuid-map synchronized to Redis successfully.")
-	return nil
+    // Get a copy of the mapping
+    mappingCopy := rc.UUIDMapper.GetMappingCopy()
+    if len(mappingCopy) == 0 {
+        rc.Logger.Warn("UUIDMapper is empty; nothing to synchronize to Redis.")
+        return nil
+    }
+    // Extract keys for batching
+    keys := rc.extractKeys(mappingCopy)
+    return rc.processBatches(keys, mappingCopy)
 }
 
 /**
- * addUUIDMapToPipeline adds the UUIDMapper's mappings to the provided pipeline.
+ * extractKeys extracts the keys from a map for batch processing.
  *
- * @param pipeline The Redis pipeline.
- * @param mapping  A copy of the current map to be iterated.
- * @return An error if the operation fails.
+ * @param mapping The map containing the entries.
+ * @return A slice of keys from the map.
  */
-func (rc *Client) addUUIDMapToPipeline(pipeline redis.Pipeliner, mapping map[string]uuid.UUIDEntry) error {
-	for key, entry := range mapping {
-		if err := rc.addUUIDEntryToPipeline(pipeline, key, entry); err != nil {
-			return err
-		}
-	}
-	return nil
+func (rc *Client) extractKeys(mapping map[string]uuid.UUIDEntry) []string {
+    keys := make([]string, 0, len(mapping))
+    for k := range mapping {
+        keys = append(keys, k)
+    }
+    return keys
+}
+
+/**
+ * processBatches processes the UUID entries in batches to avoid Redis command size limits.
+ *
+ * @param keys    A slice of keys to process.
+ * @param mapping The mapping containing the entries.
+ * @return An error if processing fails.
+ */
+func (rc *Client) processBatches(keys []string, mapping map[string]uuid.UUIDEntry) error {
+    const batchSize = 500
+    totalBatches := (len(keys) + batchSize - 1) / batchSize
+    for i := 0; i < len(keys); i += batchSize {
+        end := i + batchSize
+        if end > len(keys) {
+            end = len(keys)
+        }
+        currentBatch := (i / batchSize) + 1
+        batchKeys := keys[i:end]
+        if err := rc.processSingleBatch(batchKeys, mapping, currentBatch, totalBatches); err != nil {
+            return err
+        }
+    }
+    rc.Logger.Info("uuid-map synchronized to Redis successfully.")
+    return nil
+}
+
+/**
+ * processSingleBatch processes a single batch of UUID entries.
+ *
+ * @param batchKeys    The keys for this batch.
+ * @param mapping      The full mapping.
+ * @param currentBatch The current batch number.
+ * @param totalBatches The total number of batches.
+ * @return An error if batch processing fails.
+ */
+func (rc *Client) processSingleBatch(
+	batchKeys []string,
+	mapping map[string]uuid.UUIDEntry,
+	currentBatch,
+	totalBatches int,
+) error {
+    // Create a pipeline for this batch
+    pipeline := rc.Client.Pipeline()
+    // Add all entries in this batch to the pipeline
+    for _, key := range batchKeys {
+        entry := mapping[key]
+        if err := rc.addUUIDEntryToPipeline(pipeline, key, entry); err != nil {
+            return fmt.Errorf("error adding entry to pipeline: %w", err)
+        }
+    }
+    // Execute the pipeline
+    if _, err := pipeline.Exec(rc.Context); err != nil {
+        return fmt.Errorf("error executing pipeline for uuid-map batch: %w", err)
+    }
+    // Log progress if processing multiple batches
+    rc.logBatchProgress(currentBatch, totalBatches, len(batchKeys), len(mapping))
+    return nil
+}
+
+/**
+ * logBatchProgress logs the progress of batch processing.
+ *
+ * @param currentBatch The current batch number.
+ * @param totalBatches The total number of batches.
+ * @param batchSize    The number of items in the current batch.
+ * @param totalItems   The total number of items being processed.
+ */
+func (rc *Client) logBatchProgress(currentBatch, totalBatches, batchSize, totalItems int) {
+    if totalBatches > 1 {
+        rc.Logger.WithFields(logrus.Fields{
+            "batch": fmt.Sprintf("%d/%d", currentBatch, totalBatches),
+            "items": fmt.Sprintf("%d items", batchSize),
+            "progress": fmt.Sprintf("%.1f%%", float64(currentBatch) / float64(totalBatches) * 100),
+        }).Debug("Batch synchronized to Redis")
+    }
 }
 
 /**
@@ -471,10 +603,8 @@ func (rc *Client) runAsyncPublisher() {
 	// Ticker to force periodic flush
 	ticker := time.NewTicker(rc.asyncBatchTimeout)
 	defer ticker.Stop()
-
 	// Batch buffer
 	batch := make([]streamItem, 0, rc.asyncBatchSize)
-
 	for {
 		select {
 		case it, ok := <-rc.asyncCh:
@@ -488,11 +618,9 @@ func (rc *Client) runAsyncPublisher() {
 			if len(batch) >= rc.asyncBatchSize {
 				rc.flushBatch(&batch)
 			}
-
 		case <-ticker.C:
-			// Timeout: flush whatever’s in batch
+			// Timeout: flush whatever's in batch
 			rc.flushBatch(&batch)
-
 		case <-rc.Context.Done():
 			// Context cancelled: final flush and exit
 			rc.flushBatch(&batch)

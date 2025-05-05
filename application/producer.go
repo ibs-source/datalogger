@@ -121,23 +121,50 @@ func ParseHostFromEndpointURL(endpointURL string) (string, error) {
 
 /**
  * Handles incoming OS signals for graceful shutdown.
- * Cancel the application context.
+ * Ensures all resources are properly closed and context is canceled.
  *
  * @param signals     A channel receiving OS signals.
  * @param application A pointer to the Main application structure.
  * @param connector   The connector to be stopped.
  */
 func handleSignals(signals chan os.Signal, application *Main, connector Connector) {
-	sig := <-signals
-	logger := application.Logger.WithField("signal", sig)
-	logger.Info("Termination signal received, shutting down safely...")
-	if connector != nil {
+    // Wait for signal
+    sig := <-signals
+    logger := application.Logger.WithField("signal", sig)
+    logger.Info("Termination signal received, shutting down safely...")
+    // Track any errors during shutdown
+    var shutdownErrors []error
+    // Stop connector if available
+    if connector != nil {
         logger.Debug("Stopping connector...")
         if err := connector.Stop(); err != nil {
+            shutdownErrors = append(shutdownErrors, fmt.Errorf("connector shutdown: %w", err))
             logger.WithError(err).Error("Error stopping connector")
+        } else {
+            logger.Debug("Connector stopped successfully")
         }
     }
-	application.Redis.Close();
-	application.Cancel()
-	logger.Info("Shutdown complete.")
+    // Close Redis connection if available
+    if application.Redis != nil {
+        logger.Debug("Closing Redis connection...")
+        if err := application.Redis.Close(); err != nil {
+            shutdownErrors = append(shutdownErrors, fmt.Errorf("redis shutdown: %w", err))
+            logger.WithError(err).Error("Error closing Redis connection")
+        } else {
+            logger.Debug("Redis connection closed successfully")
+        }
+    }
+    // Cancel the application context
+    if application.Cancel != nil {
+        logger.Debug("Canceling application context...")
+        application.Cancel()
+        logger.Debug("Application context canceled")
+    }
+    // Log shutdown status
+    if len(shutdownErrors) > 0 {
+        logger.WithField("errorCount", len(shutdownErrors)).
+            Warn("Shutdown completed with errors")
+    } else {
+        logger.Info("Shutdown completed successfully")
+    }
 }

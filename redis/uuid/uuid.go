@@ -4,8 +4,9 @@
 package uuid
 
 import (
-	"crypto/sha256"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -33,67 +34,85 @@ type UUIDMapper struct {
 }
 
 /**
- * normalizeValue recursively normalizes an interface{}.
- * - If v is a map[string]interface{}, it sorts the keys and normalizes each value.
- * - If v is a []interface{}, it normalizes each element.
- * - Otherwise, it returns the primitive value (string, float64, bool, nil, etc.) as is.
+ * NewUUIDMapper creates a new instance of UUIDMapper.
+ *
+ * @param logger The logger for recording messages.
+ * @return A pointer to the initialized UUIDMapper.
  */
-func normalizeValue(v interface{}) interface{} {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		// Sort the keys to ensure deterministic output
-		sortedKeys := make([]string, 0, len(val))
-		for k := range val {
-			sortedKeys = append(sortedKeys, k)
-		}
-		sort.Strings(sortedKeys)
-
-		normalized := make(map[string]interface{}, len(val))
-		for _, k := range sortedKeys {
-			normalized[k] = normalizeValue(val[k])
-		}
-		return normalized
-
-	case []interface{}:
-		normalized := make([]interface{}, len(val))
-		for i, elem := range val {
-			normalized[i] = normalizeValue(elem)
-		}
-		return normalized
-
-	default:
-		// Primitive type (string, float64, bool, nil, etc.)
-		return val
+func NewUUIDMapper(logger *logrus.Logger) *UUIDMapper {
+	return &UUIDMapper{
+		Mapping: make(map[string]UUIDEntry),
+		Logger:  logger,
 	}
 }
 
 /**
- * marshalCanonical performs:
- * 1) A first json.Marshal to get a byte representation of v.
- * 2) A json.Unmarshal into an interface{} to convert to a generic structure.
- * 3) normalizeValue on the resulting structure to get a deterministic layout.
- * 4) A final json.Marshal of the normalized structure.
+ * marshalCanonical creates a deterministic JSON representation of a value.
+ * The function normalizes the structure by sorting map keys and preserving array order.
+ *
+ * @param v The value to convert to canonical JSON.
+ * @return A byte slice containing the canonical JSON representation.
+ * @return An error if serialization fails.
  */
 func marshalCanonical(v interface{}) ([]byte, error) {
-	// First pass: get a generic JSON representation
-	tmp, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	// Unmarshal into an interface{}
-	var decoded interface{}
-	if err := json.Unmarshal(tmp, &decoded); err != nil {
-		return nil, err
-	}
-	// Recursively normalize the structure
-	normalized := normalizeValue(decoded)
-	// Final Marshal of the normalized structure
-	return json.Marshal(normalized)
+    // First pass: marshal to get a generic JSON representation
+    rawJSON, err := json.Marshal(v)
+    if err != nil {
+        return nil, fmt.Errorf("initial marshaling failed: %w", err)
+    }
+    // Unmarshal into an interface{} to get a generic structure
+    var decoded interface{}
+    if err := json.Unmarshal(rawJSON, &decoded); err != nil {
+        return nil, fmt.Errorf("unmarshaling failed: %w", err)
+    }
+    // Apply normalization to create a deterministic structure
+    normalized := normalizeValue(decoded)
+    // Final marshal of the normalized structure
+    result, err := json.Marshal(normalized)
+    if err != nil {
+        return nil, fmt.Errorf("final marshaling failed: %w", err)
+    }
+    return result, nil
+}
+
+/**
+ * normalizeValue recursively normalizes an interface{} value.
+ * Maps have their keys sorted, arrays preserve order but normalize their elements.
+ *
+ * @param v The value to normalize.
+ * @return A normalized version of the input value.
+ */
+func normalizeValue(v interface{}) interface{} {
+    switch val := v.(type) {
+    case map[string]interface{}:
+        // Get a sorted list of keys
+        keys := make([]string, 0, len(val))
+        for k := range val {
+            keys = append(keys, k)
+        }
+        sort.Strings(keys)
+        // Create a new map with sorted keys
+        normalized := make(map[string]interface{}, len(val))
+        for _, k := range keys {
+            normalized[k] = normalizeValue(val[k])
+        }
+        return normalized
+    case []interface{}:
+        // Normalize each element in the array
+        normalized := make([]interface{}, len(val))
+        for i, elem := range val {
+            normalized[i] = normalizeValue(elem)
+        }
+        return normalized
+    default:
+        // Primitive types are returned as is
+        return val
+    }
 }
 
 /**
  * EqualConfiguration compares the Configuration of the UUIDEntry with another configuration.
- * It generates a "canonical JSON" for both configurations (recursively normalized) and compares their SHA256 hash.
+ * It generates a "canonical JSON" for both configurations and compares them.
  *
  * @param other The other configuration to compare with.
  * @return True if the configurations are effectively equal, false otherwise.
@@ -104,9 +123,7 @@ func (entry *UUIDEntry) EqualConfiguration(other interface{}) bool {
 	if entryErr != nil || otherErr != nil {
 		return false
 	}
-	entryHash := sha256.Sum256(entryJSON)
-	otherHash := sha256.Sum256(otherJSON)
-	return entryHash == otherHash
+	return bytes.Equal(entryJSON, otherJSON)
 }
 
 /**
@@ -120,19 +137,6 @@ func (entry *UUIDEntry) Equals(other UUIDEntry) bool {
 		return false
 	}
 	return entry.EqualConfiguration(other.Configuration)
-}
-
-/**
- * NewUUIDMapper creates a new instance of UUIDMapper.
- *
- * @param logger The logger for recording messages.
- * @return A pointer to the initialized UUIDMapper.
- */
-func NewUUIDMapper(logger *logrus.Logger) *UUIDMapper {
-	return &UUIDMapper{
-		Mapping: make(map[string]UUIDEntry),
-		Logger:  logger,
-	}
 }
 
 /**

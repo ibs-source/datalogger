@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ibs-source/datalogger/application"
@@ -24,6 +25,7 @@ type Server struct {
 	Main          *producer.Main        // Main is the main application context.
 	Logger        *logrus.Logger        // Logger for logging messages.
 	Handler       http.Handler          // Handler is the HTTP handler.
+	shutdownOnce  sync.Once             // Ensures shutdown happens only once
 }
 
 /**
@@ -108,7 +110,10 @@ func (srv *Server) listenAndServe(server *http.Server) {
  */
 func (srv *Server) shutdownOnContextDone(server *http.Server) {
 	<-srv.Main.Context.Done()
-	srv.shutdownServer(server)
+	// Use sync.Once to ensure shutdown happens only once
+	srv.shutdownOnce.Do(func() {
+		srv.shutdownServer(server)
+	})
 }
 
 /**
@@ -128,15 +133,35 @@ func (srv *Server) shutdownServer(server *http.Server) {
 }
 
 /**
+ * validateMethod checks if the HTTP request uses the expected method.
+ * If not, it returns an appropriate error response.
+ *
+ * @param writer      The HTTP response writer.
+ * @param request     The HTTP request.
+ * @param allowedMethod The HTTP method that is allowed (e.g., http.MethodGet).
+ * @return bool       True if validation passes, false otherwise.
+ */
+func validateMethod(writer http.ResponseWriter, request *http.Request, allowedMethod string) bool {
+    if request.Method != allowedMethod {
+        http.Error(writer, "Method not allowed", http.StatusMethodNotAllowed)
+        return false
+    }
+    return true
+}
+
+/**
  * handleUUIDMapping handles the /uuid-mapping endpoint and returns the UUID mapping as JSON.
  *
  * @param writer  The HTTP response writer.
  * @param request The HTTP request.
  */
 func (srv *Server) handleUUIDMapping(writer http.ResponseWriter, request *http.Request) {
-	// Instead of manual RLock(), use a copy from UUIDMapper:
-	mappingCopy := srv.Main.Redis.UUIDMapper.GetMappingCopy()
-	srv.writeJSONResponse(writer, mappingCopy)
+    if !validateMethod(writer, request, http.MethodGet) {
+        return
+    }
+    // Get the mapping
+    mappingCopy := srv.Main.Redis.UUIDMapper.GetMappingCopy()
+    srv.writeJSONResponse(writer, mappingCopy)
 }
 
 /**
@@ -146,8 +171,11 @@ func (srv *Server) handleUUIDMapping(writer http.ResponseWriter, request *http.R
  * @param request The HTTP request.
  */
 func (srv *Server) handleStatus(writer http.ResponseWriter, request *http.Request) {
-	status := srv.Main.Connector.Status()
-	srv.writeJSONResponse(writer, status)
+    if !validateMethod(writer, request, http.MethodGet) {
+        return
+    }
+    status := srv.Main.Connector.Status()
+    srv.writeJSONResponse(writer, status)
 }
 
 /**
@@ -172,10 +200,13 @@ func (srv *Server) writeJSONResponse(writer http.ResponseWriter, data interface{
  * @param request The HTTP request.
  */
 func (srv *Server) handleHealthz(writer http.ResponseWriter, request *http.Request) {
-	writer.WriteHeader(http.StatusOK)
-	_, err := writer.Write([]byte("Health ok!"))
-	if err != nil {
-		srv.Logger.WithError(err).Error("Failed to write healthz response")
-		return
-	}
+    if !validateMethod(writer, request, http.MethodGet) {
+        return
+    }
+    writer.WriteHeader(http.StatusOK)
+    _, err := writer.Write([]byte("Health ok!"))
+    if err != nil {
+        srv.Logger.WithError(err).Error("Failed to write healthz response")
+        return
+    }
 }

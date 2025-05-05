@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -59,7 +60,10 @@ func generateECDSAPrivateKey(curve elliptic.Curve) (*ecdsa.PrivateKey, error) {
  * @return err       An error if the certificate creation fails.
  */
 func createCertificate(privateKey interface{}, host string, validFor time.Duration) ([]byte, []byte, error) {
-	template := buildCertificateTemplate(validFor)
+	template, err := buildCertificateTemplate(validFor)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build certificate template: %w", err)
+	}
 	parseHostsIntoCertificate(host, &template)
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, extractPublicKey(privateKey), privateKey)
 	if err != nil {
@@ -76,9 +80,13 @@ func createCertificate(privateKey interface{}, host string, validFor time.Durati
  *
  * @return           An x509.Certificate with default settings for usage,
  *                   subject, and validity.
+ * @return           An error if serialNumber generation fails.
  */
-func buildCertificateTemplate(validFor time.Duration) x509.Certificate {
-	serialNumber, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+func buildCertificateTemplate(validFor time.Duration) (x509.Certificate, error) {
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return x509.Certificate{}, fmt.Errorf("failed to generate serial number: %w", err)
+	}
 	return x509.Certificate{
 		IsCA:                  false,
 		SerialNumber:          serialNumber,
@@ -88,7 +96,7 @@ func buildCertificateTemplate(validFor time.Duration) x509.Certificate {
 		KeyUsage:              x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
-	}
+	}, nil
 }
 
 /**
@@ -100,6 +108,10 @@ func buildCertificateTemplate(validFor time.Duration) x509.Certificate {
  */
 func parseHostsIntoCertificate(host string, template *x509.Certificate) {
 	for _, h := range strings.Split(host, ",") {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
 		if ip := net.ParseIP(h); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
 		} else {
@@ -181,6 +193,65 @@ func pemBlockForPrivateKey(privateKey interface{}) (*pem.Block, error) {
 }
 
 /**
+ * validateHost validates the format of the host parameter.
+ * It checks if the host is empty and validates the format of each host in the comma-separated list.
+ *
+ * @param host       A comma-separated list of hostnames or IP addresses.
+ * @return           An error if the host is invalid.
+ */
+func validateHost(host string) error {
+	// Check if the host is empty
+	if len(host) == 0 {
+		return errors.New("missing required host parameter")
+	}
+	// Split the host string by commas and trim whitespace
+	// to handle cases like "host1, host2, host3"
+	for _, h := range strings.Split(host, ",") {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			return errors.New("empty host in comma-separated list")
+		}
+		// Check if it's a valid IP address
+		// This will also check for IPv4 and IPv6 formats
+		// and will not allow invalid IP formats
+		if ip := net.ParseIP(h); ip != nil {
+			continue
+		}
+		// Check if it's a valid URL
+		// This will also check for valid scheme and host in the URL
+		if parsedURL, err := url.Parse(h); err == nil && parsedURL.Scheme != "" && parsedURL.Host != "" {
+			continue
+		}
+		// Check if it's a valid hostname
+		// This will check for valid DNS names and labels
+		if !isValidHostname(h) {
+			return fmt.Errorf("invalid hostname format: %s", h)
+		}
+	}
+	return nil
+}
+
+/**
+ * isValidHostname checks if a string is a valid hostname.
+ * 
+ * @param host       The hostname to validate.
+ * @return           True if the hostname is valid, false otherwise.
+ */
+func isValidHostname(host string) bool {
+	// RFC 1123 & RFC 952 hostname validation
+	// - Hostname max length is 253 characters
+	// - Each label (part between dots) is max 63 characters
+	// - Labels can contain only alphanumeric chars and hyphens
+	// - Labels cannot start or end with a hyphen
+	if len(host) > 253 {
+		return false
+	}
+	// Simple regex for hostname validation
+	hostnameRegex := regexp.MustCompile(`^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]))*$`)
+	return hostnameRegex.MatchString(host)
+}
+
+/**
  * GenerateCertificate creates an X.509 certificate and its corresponding
  * RSA private key. If rsaBits is 0, it defaults to 2048 bits.
  *
@@ -194,8 +265,8 @@ func pemBlockForPrivateKey(privateKey interface{}) (*pem.Block, error) {
  * @return err       An error if the certificate or private key generation fails.
  */
 func GenerateCertificate(host string, rsaBits int, validFor time.Duration) ([]byte, []byte, error) {
-	if len(host) == 0 {
-		return nil, nil, errors.New("missing required host parameter")
+	if err := validateHost(host); err != nil {
+		return nil, nil, err
 	}
 	if rsaBits == 0 {
 		rsaBits = 2048
@@ -221,8 +292,8 @@ func GenerateCertificate(host string, rsaBits int, validFor time.Duration) ([]by
  * @return err       An error if the certificate or private key generation fails.
  */
 func GenerateECDSACertificate(host string, curve elliptic.Curve, validFor time.Duration) ([]byte, []byte, error) {
-	if len(host) == 0 {
-		return nil, nil, errors.New("missing required host parameter")
+	if err := validateHost(host); err != nil {
+		return nil, nil, err
 	}
 	privateKey, err := generateECDSAPrivateKey(curve)
 	if err != nil {
@@ -275,14 +346,12 @@ func DecodeRSAPrivateKey(pemData []byte) (*rsa.PrivateKey, error) {
 			return nil, fmt.Errorf("not an RSA private key")
 		}
 		return rsaKey, nil
-
 	case "RSA PRIVATE KEY":
 		rsaKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse PKCS#1: %w", err)
 		}
 		return rsaKey, nil
-
 	default:
 		return nil, fmt.Errorf("unsupported key type %s", block.Type)
 	}
