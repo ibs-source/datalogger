@@ -118,20 +118,32 @@ func (srv *Server) shutdownOnContextDone(server *http.Server) {
 
 /**
  * shutdownServer gracefully shuts down the HTTP server with a timeout.
+ * Includes safeguards to prevent indefinite blocking during shutdown.
  *
  * @param server The HTTP server to shut down.
  */
 func (srv *Server) shutdownServer(server *http.Server) {
-	ctxShutDown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err := server.Shutdown(ctxShutDown)
-	if err != nil {
-		srv.Logger.WithError(err).Error("Server Shutdown Failed")
-		return
-	}
-	srv.Logger.Info("Server gracefully stopped")
+    srv.Logger.Info("Initiating server shutdown...")
+    // Create a context with a reasonable timeout
+    ctxShutDown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    // Set up a channel to track shutdown completion
+    done := make(chan struct{})
+    // Start shutdown operation in a separate goroutine
+    go srv.shutdownServerWorker(server, ctxShutDown, done)
+    
+    // Wait for shutdown to complete or timeout
+    select {
+    case <-done:
+        srv.Logger.Info("Server gracefully stopped")
+    case <-time.After(15*time.Second): // Give a bit more time than the context timeout
+        srv.Logger.Warn("Server shutdown timed out, forcing exit")
+        // Force close connections
+        if err := server.Close(); err != nil {
+            srv.Logger.WithError(err).Error("Error during forced server close")
+        }
+    }
 }
-
 /**
  * validateMethod checks if the HTTP request uses the expected method.
  * If not, it returns an appropriate error response.
@@ -209,4 +221,19 @@ func (srv *Server) handleHealthz(writer http.ResponseWriter, request *http.Reque
         srv.Logger.WithError(err).Error("Failed to write healthz response")
         return
     }
+}
+
+/**
+ * shutdownServerWorker performs the actual server shutdown and signals on the provided channel when complete.
+ *
+ * @param server     The HTTP server to shut down.
+ * @param ctx        The context with timeout for the operation.
+ * @param doneChan   The channel to signal when shutdown is complete.
+ */
+func (srv *Server) shutdownServerWorker(server *http.Server, ctx context.Context, doneChan chan<- struct{}) {
+    err := server.Shutdown(ctx)
+    if err != nil {
+        srv.Logger.WithError(err).Error("Server Shutdown Failed")
+    }
+    close(doneChan)
 }

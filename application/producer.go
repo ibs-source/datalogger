@@ -7,6 +7,7 @@ package producer
 import (
 	"context"
 	"fmt"
+	"time"
 	"net/url"
 	"os"
 	"os/signal"
@@ -122,6 +123,7 @@ func ParseHostFromEndpointURL(endpointURL string) (string, error) {
 /**
  * Handles incoming OS signals for graceful shutdown.
  * Ensures all resources are properly closed and context is canceled.
+ * Implements timeouts to prevent indefinite blocking during shutdown.
  *
  * @param signals     A channel receiving OS signals.
  * @param application A pointer to the Main application structure.
@@ -132,12 +134,17 @@ func handleSignals(signals chan os.Signal, application *Main, connector Connecto
     sig := <-signals
     logger := application.Logger.WithField("signal", sig)
     logger.Info("Termination signal received, shutting down safely...")
+    // Create a deadline for shutdown
+    shutdownDeadline := time.Now().Add(30 * time.Second)
+    shutdownCtx, cancel := context.WithDeadline(context.Background(), shutdownDeadline)
+    defer cancel()
     // Track any errors during shutdown
     var shutdownErrors []error
     // Stop connector if available
     if connector != nil {
         logger.Debug("Stopping connector...")
-        if err := connector.Stop(); err != nil {
+        err := stopConnectorWithTimeout(shutdownCtx, connector)
+        if err != nil {
             shutdownErrors = append(shutdownErrors, fmt.Errorf("connector shutdown: %w", err))
             logger.WithError(err).Error("Error stopping connector")
         } else {
@@ -147,7 +154,8 @@ func handleSignals(signals chan os.Signal, application *Main, connector Connecto
     // Close Redis connection if available
     if application.Redis != nil {
         logger.Debug("Closing Redis connection...")
-        if err := application.Redis.Close(); err != nil {
+        err := closeRedisWithTimeout(shutdownCtx, application.Redis)
+        if err != nil {
             shutdownErrors = append(shutdownErrors, fmt.Errorf("redis shutdown: %w", err))
             logger.WithError(err).Error("Error closing Redis connection")
         } else {
@@ -167,4 +175,72 @@ func handleSignals(signals chan os.Signal, application *Main, connector Connecto
     } else {
         logger.Info("Shutdown completed successfully")
     }
+    // Force exit if we've reached the max shutdown time
+    timeRemaining := time.Until(shutdownDeadline)
+    if timeRemaining <= 0 {
+        logger.Warn("Shutdown deadline exceeded, forcing exit")
+        os.Exit(1)
+    }
+}
+
+/**
+ * stopConnectorWithTimeout attempts to stop the connector with a timeout to prevent blocking.
+ *
+ * @param ctx       The context with timeout for the operation.
+ * @param connector The connector to be stopped.
+ * @return          An error if stopping fails or times out.
+ */
+func stopConnectorWithTimeout(ctx context.Context, connector Connector) error {
+    // Create channels for result communication
+    connectorDone := make(chan error, 1)
+    // Start connector stopping operation
+    go stopConnectorWorker(connector, connectorDone)
+    // Wait for completion or timeout
+    select {
+    case err := <-connectorDone:
+        return err
+    case <-ctx.Done():
+        return fmt.Errorf("connector shutdown timed out: %w", ctx.Err())
+    }
+}
+
+/**
+ * stopConnectorWorker performs the actual connector stopping and sends the result to the provided channel.
+ *
+ * @param connector    The connector to be stopped.
+ * @param resultChan   The channel to send the stopping result to.
+ */
+func stopConnectorWorker(connector Connector, resultChan chan<- error) {
+    resultChan <- connector.Stop()
+}
+
+/**
+ * closeRedisWithTimeout attempts to close the Redis connection with a timeout to prevent blocking.
+ *
+ * @param ctx       The context with timeout for the operation.
+ * @param redisClient The Redis client to be closed.
+ * @return          An error if closing fails or times out.
+ */
+func closeRedisWithTimeout(ctx context.Context, redisClient *redis.Client) error {
+    // Create channels for result communication
+    redisDone := make(chan error, 1)
+    // Start Redis closing operation
+    go closeRedisWorker(redisClient, redisDone)
+    // Wait for completion or timeout
+    select {
+    case err := <-redisDone:
+        return err
+    case <-ctx.Done():
+        return fmt.Errorf("redis shutdown timed out: %w", ctx.Err())
+    }
+}
+
+/**
+ * closeRedisWorker performs the actual Redis client closing and sends the result to the provided channel.
+ *
+ * @param redisClient The Redis client to be closed.
+ * @param resultChan  The channel to send the closing result to.
+ */
+func closeRedisWorker(redisClient *redis.Client, resultChan chan<- error) {
+    resultChan <- redisClient.Close()
 }

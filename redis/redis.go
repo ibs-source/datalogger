@@ -102,28 +102,126 @@ func createRedisClient(redisURL string) (*redis.Client, error) {
 
 /**
  * Close closes the Redis client connection after synchronizing the UUID map.
+ * Includes timeouts to prevent blocking indefinitely during shutdown.
  *
  * @return An error if closing fails.
  */
 func (rc *Client) Close() error {
-	// Close Pub/Sub subscription first
-	rc.Logger.Debug("Stopping Pub/Sub subscription...")
-	rc.stopPubSub()
-	// Synchronize the UUID map before closing.
-	if len(rc.UUIDMapper.GetMappingCopy()) > 0 {
-		rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
-		if err := rc.syncUUIDMapToRedis(); err != nil {
-			rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
-		}
-	}
-	// Disable async batching if enabled
-	rc.DisableAsyncBatching()
-	rc.Logger.Debug("Closing Redis client...")
-	if err := rc.Client.Close(); err != nil {
-		rc.Logger.WithError(err).Error("Error closing Redis client")
-		return err
-	}
-	return nil
+    // Create a timeout context to prevent blocking forever
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    rc.Logger.Debug("Stopping Pub/Sub subscription...")
+    rc.stopPubSub()
+    // Synchronize the UUID map before closing.
+    if len(rc.UUIDMapper.GetMappingCopy()) > 0 {
+        rc.Logger.Debug("Synchronizing uuid-map to Redis (final sync)...")
+        if err := rc.syncUUIDMapToRedisWithTimeout(ctx); err != nil {
+            rc.Logger.WithError(err).Error("Error synchronizing uuid-map to Redis before closing")
+        }
+    }
+    // Disable async batching if enabled
+    rc.disableAsyncBatchingWithTimeout(ctx)
+    rc.Logger.Debug("Closing Redis client...")
+    err := rc.closeRedisClientWithTimeout(ctx)
+    if err != nil {
+        rc.Logger.WithError(err).Error("Error closing Redis client")
+        return err
+    }
+    return nil
+}
+
+/**
+ * closeRedisClientWorker performs the actual client closing and sends the result to the provided channel.
+ *
+ * @param resultChan    The channel to send the closing result to.
+ */
+func (rc *Client) closeRedisClientWorker(resultChan chan<- error) {
+    resultChan <- rc.Client.Close()
+}
+
+/**
+ * closeRedisClientWithTimeout closes the Redis client with a timeout.
+ *
+ * @param ctx    The context with timeout for the operation.
+ * @return       An error if closing fails or times out.
+ */
+func (rc *Client) closeRedisClientWithTimeout(ctx context.Context) error {
+    // Create channel for completion signal
+    closeErr := make(chan error, 1)
+    // Start closing in a separate goroutine
+    go rc.closeRedisClientWorker(closeErr)
+    // Wait for completion or timeout
+    select {
+    case err := <-closeErr:
+        return err
+    case <-ctx.Done():
+        return fmt.Errorf("redis client close timed out: %w", ctx.Err())
+    }
+}
+
+/**
+ * syncUUIDMapToRedisWithTimeout synchronizes the UUID map to Redis with a timeout.
+ *
+ * @param ctx    The context with timeout for the operation.
+ * @return       An error if synchronization fails or times out.
+ */
+func (rc *Client) syncUUIDMapToRedisWithTimeout(ctx context.Context) error {
+    // Create channel for completion signal
+    syncDone := make(chan error, 1)
+    // Start synchronization in a separate goroutine
+    go rc.syncToRedisWorker(syncDone)
+    // Wait for completion or timeout
+    select {
+    case err := <-syncDone:
+        return err
+    case <-ctx.Done():
+        return fmt.Errorf("UUID map sync timed out during shutdown: %w", ctx.Err())
+    }
+}
+
+/**
+ * syncToRedisWorker performs the actual synchronization and sends the result to the provided channel.
+ *
+ * @param resultChan    The channel to send the synchronization result to.
+ */
+func (rc *Client) syncToRedisWorker(resultChan chan<- error) {
+    resultChan <- rc.syncUUIDMapToRedis()
+}
+
+/**
+ * disableAsyncBatchingWithTimeout disables async batching with a timeout.
+ *
+ * @param ctx    The context with timeout for the operation.
+ */
+func (rc *Client) disableAsyncBatchingWithTimeout(ctx context.Context) {
+    if rc.asyncCh == nil {
+        return
+    }
+    // Close the channel to signal the publisher to stop
+    close(rc.asyncCh)
+    // Create channel for completion signal
+    done := make(chan struct{})
+    // Start waiting in a separate goroutine
+    go rc.waitForAsyncBatching(done)
+    // Wait for completion or timeout
+    select {
+    case <-done:
+        // WaitGroup completed normally
+        rc.Logger.Debug("Async batching disabled successfully")
+    case <-ctx.Done():
+        rc.Logger.Warn("Timed out waiting for async batch processing to complete")
+    }
+    rc.asyncCh = nil
+}
+
+/**
+ * waitForAsyncBatching waits for the async batching to complete and signals on the provided channel.
+ *
+ * @param doneChan    The channel to signal when waiting is complete.
+ */
+func (rc *Client) waitForAsyncBatching(doneChan chan<- struct{}) {
+    rc.asyncWg.Wait()
+    close(doneChan)
 }
 
 /**
@@ -265,22 +363,37 @@ func (rc *Client) checkRedisConnection() error {
 
 /**
  * uuidMapSyncTicker performs periodic synchronization of the UUID map.
+ * Includes frequent context checks to ensure prompt termination.
  */
 func (rc *Client) uuidMapSyncTicker() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-rc.Context.Done():
-			return
-		case <-ticker.C:
-			if err := rc.checkAndSyncUUIDMap(); err != nil {
-				rc.Logger.WithError(err).Error("Error during periodic uuid-map synchronization")
-			}
-		}
-	}
+    ticker := time.NewTicker(time.Minute)
+    defer ticker.Stop()
+    // Create a more frequent check ticker for context cancellation
+    contextCheckTicker := time.NewTicker(5 * time.Second)
+    defer contextCheckTicker.Stop()
+    for {
+        // Immediate context check at the beginning of each loop
+        if rc.Context.Err() != nil {
+            rc.Logger.Debug("UUID map sync ticker stopping due to context cancellation")
+            return
+        }
+        select {
+        case <-rc.Context.Done():
+            rc.Logger.Debug("UUID map sync ticker stopping due to context cancellation")
+            return
+        case <-ticker.C:
+            if err := rc.checkAndSyncUUIDMap(); err != nil {
+                rc.Logger.WithError(err).Error("Error during periodic uuid-map synchronization")
+            }
+        case <-contextCheckTicker.C:
+            // More frequent check for context cancellation to avoid waiting a full minute
+            if rc.Context.Err() != nil {
+                rc.Logger.Debug("UUID map sync ticker stopping due to context cancellation (periodic check)")
+                return
+            }
+        }
+    }
 }
-
 
 /**
  * retryPing attempts to ping Redis multiple times with a delay between attempts.
@@ -725,36 +838,71 @@ func (rc *Client) applyValidConfigurations(validKeys map[string]interface{}) err
 
 /**
  * ListenForCommands subscribes to the Redis channel and listens for start and stop commands.
+ * Includes timeout checks to prevent blocking during shutdown.
  *
  * @param startFunc The function to execute when a start command is received.
  * @param stopFunc  The function to execute when a stop command is received.
  */
 func (rc *Client) ListenForCommands(startFunc, stopFunc func() error) {
-	ps := pubsub.NewPubSub(rc.Logger)
-	ctx := rc.Context
-	// Subscribe without deferring pubsubClient.Close()
-	rc.PubSub = rc.Client.Subscribe(ctx, "remote-control")
-	// Retrieve the channel to read messages from.
-	ch := rc.PubSub.Channel()
-	handlers := map[string]pubsub.CommandHandler{
-		"start": startFunc,
-		"stop":  stopFunc,
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			// Context is canceled: stop listening and close the Pub/Sub client
-			ps.Logger.Info("Stopping command listener")
-			rc.PubSub.Close() // Explicitly close the subscription
-			return
-		case msg, ok := <-ch:
-			// If the channel is closed or invalid, exit the loop to avoid panics
-			if !ok {
-				ps.Logger.Warn("PubSub channel closed unexpectedly")
-				return
-			}
-			// Handle the incoming command if available
-			ps.HandleCommand(msg.Payload, handlers)
-		}
-	}
+    ps := pubsub.NewPubSub(rc.Logger)
+    ctx := rc.Context
+    // Subscribe without deferring pubsubClient.Close()
+    rc.PubSub = rc.Client.Subscribe(ctx, "remote-control")
+    // Retrieve the channel to read messages from
+    ch := rc.PubSub.Channel()
+    handlers := map[string]pubsub.CommandHandler{
+        "start": startFunc,
+        "stop":  stopFunc,
+    }
+    // Start a goroutine to force close PubSub on context cancellation
+    go rc.monitorContextForPubSub()
+    // Enter command listening loop with timeout checks
+    rc.commandListeningLoop(ctx, ps, ch, handlers)
+}
+
+/**
+ * monitorContextForPubSub monitors the context and forces PubSub closure when the context is done.
+ * This ensures we don't get stuck waiting on the PubSub channel.
+ */
+func (rc *Client) monitorContextForPubSub() {
+    <-rc.Context.Done()
+    // Force closing the PubSub when context is canceled
+    rc.stopPubSub()
+}
+
+/**
+ * commandListeningLoop handles the main loop for listening to PubSub commands.
+ * Includes regular timeout checks to ensure the application can exit properly.
+ *
+ * @param ctx        The context for controlling operation.
+ * @param ps         The PubSub handler.
+ * @param ch         The channel to read messages from.
+ * @param handlers   The command handlers map.
+ */
+func (rc *Client) commandListeningLoop(ctx context.Context, ps *pubsub.PubSub, ch <-chan *redis.Message, handlers map[string]pubsub.CommandHandler) {
+    // Create a ticker for regular timeout checks
+    timeoutTicker := time.NewTicker(5 * time.Second)
+    defer timeoutTicker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            // Context is canceled: stop listening
+            ps.Logger.Info("Stopping command listener (context canceled)")
+            return
+        case msg, ok := <-ch:
+            // If the channel is closed or invalid, exit the loop to avoid panics
+            if !ok {
+                ps.Logger.Warn("PubSub channel closed unexpectedly")
+                return
+            }
+            // Handle the incoming command
+            ps.HandleCommand(msg.Payload, handlers)
+        case <-timeoutTicker.C:
+            // Regular check for context cancellation
+            if ctx.Err() != nil {
+                ps.Logger.Info("Command listener timeout check detected context cancellation")
+                return
+            }
+        }
+    }
 }
