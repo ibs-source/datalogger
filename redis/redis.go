@@ -632,21 +632,19 @@ func (rc *Client) addUUIDEntryToPipeline(pipeline redis.Pipeliner, key string, e
  * @return An error if the operation fails.
  */
 func (rc *Client) PushToRedis(uuid string, max int64, data map[string]interface{}) error {
-	data = rc.addTimestamp(data)
-	return rc.addToStream(uuid, max, data)
+    rc.addTimestamp(&data)
+    return rc.addToStream(uuid, max, data)
 }
 
 /**
  * addTimestamp adds a timestamp to the data map if it does not already exist.
  *
  * @param data The data map to which the timestamp is conditionally added.
- * @return The updated data map with the timestamp, if it was not already present.
  */
-func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface{} {
-	if _, exists := data["timestamp"]; !exists {
-		data["timestamp"] = time.Now().UnixMilli()
-	}
-	return data
+func (rc *Client) addTimestamp(data *map[string]interface{}) {
+    if _, exists := (*data)["timestamp"]; !exists {
+        (*data)["timestamp"] = time.Now().UnixMilli()
+    }
 }
 
 /**
@@ -654,7 +652,7 @@ func (rc *Client) addTimestamp(data map[string]interface{}) map[string]interface
  *
  * @param uuid The name of the Redis stream.
  * @param max  The maximum number of records to retain in the stream.
- * @param data The data to be added to the stream.
+ * @param data The values map to be added to the stream.
  * @return An error if the operation fails.
  */
 func (rc *Client) addToStream(uuid string, max int64, data map[string]interface{}) error {
@@ -682,8 +680,8 @@ func (rc *Client) PushToRedisAsync(uuid string, max int64, data map[string]inter
 	if rc.asyncCh == nil {
 		return fmt.Errorf("async batching not enabled")
 	}
-	data = rc.addTimestamp(data)
-	select {
+	rc.addTimestamp(&data)
+    select {
 	case rc.asyncCh <- streamItem{Stream: uuid, MaxLen: max, Values: data}:
 		return nil
 	case <-rc.Context.Done():
@@ -727,7 +725,7 @@ func (rc *Client) runAsyncPublisher() {
 				return
 			}
 			// Add item and flush if capacity reached
-			batch = rc.appendToBatch(batch, it)
+			batch = append(batch, it)
 			if len(batch) >= rc.asyncBatchSize {
 				rc.flushBatch(&batch)
 			}
@@ -740,17 +738,6 @@ func (rc *Client) runAsyncPublisher() {
 			return
 		}
 	}
-}
-
-/**
- * appendToBatch appends the given streamItem to the provided batch slice.
- *
- * @param batch The current slice of streamItem entries.
- * @param it    The streamItem to append to the batch.
- * @return A new slice containing all previous batch items plus the new item.
- */
-func (rc *Client) appendToBatch(batch []streamItem, it streamItem) []streamItem {
-    return append(batch, it)
 }
 
 /**
@@ -772,7 +759,9 @@ func (rc *Client) flushBatch(batch *[]streamItem) {
             MaxLen: it.MaxLen,
         })
     }
-    pipe.Exec(rc.Context)
+    if _, err := pipe.Exec(rc.Context); err != nil {
+        rc.Logger.WithError(err).Error("Error flushing batch to Redis")
+    }
     *batch = (*batch)[:0]
 }
 
